@@ -76,12 +76,21 @@ Recommended reading order for reload:
 
 ## Current Repo State
 
-At the time this file was created, the repo contains documentation and planning only. The codebase has not been scaffolded yet.
+The repo now has an initial Rust workspace scaffold and the first schema implementation.
+
+Currently implemented:
+
+- Root Cargo workspace
+- `scene_schema` crate with parsing and validation
+- Placeholder crates for `scene_runtime`, `renderer`, and `ai_adapter`
+- `editor` binary scaffold
+- JSON Schema for document version `0.1`
+- Hand-authored example scene documents
 
 Expected next implementation step:
 
-- Turn the schema section in `spec.md` into a machine-checkable JSON Schema
-- Scaffold the Rust workspace and crate layout
+- Deepen `scene_schema` from baseline validation into more complete typed document modeling as needed
+- Start `scene_runtime` with registry and traversal primitives
 
 ## Intended Repo Shape
 
@@ -165,10 +174,10 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Create a real JSON Schema for document version `0.1`
-2. Scaffold the Rust workspace
-3. Add `scene_schema` crate
-4. Add hand-authored example scene documents
+1. Build `scene_runtime` registry and traversal helpers
+2. Decide whether validation should remain stringly in `params` for MVP or become partially typed per node
+3. Add command-oriented document mutation helpers
+4. Begin renderer crate architecture around Skia integration points
 5. Commit each slice separately
 
 ## Notes For Future Codex Sessions

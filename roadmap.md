@@ -494,7 +494,7 @@ Avoid:
 
 ## Immediate Next Actions
 
-1. Initialize the repo and commit the current project docs
-2. Create a machine-checkable JSON Schema from `spec.md`
-3. Scaffold the Rust workspace and crate layout for document/runtime/rendering separation
-4. Add first example scene documents as fixtures
+1. Build the first `scene_runtime` registry and traversal APIs
+2. Decide the first command/edit abstraction for document mutations
+3. Expand schema validation where the current generic `params` model is too loose
+4. Start renderer crate design around Skia-facing interfaces without committing to full Qt integration yet
