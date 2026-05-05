@@ -2,8 +2,8 @@ use std::fmt;
 use std::path::Path;
 
 use skia_safe::{
-    BlurStyle, Color, EncodedImageFormat, Font, MaskFilter, Paint, PathBuilder, RRect,
-    Rect as SkRect, Surface, surfaces,
+    BlurStyle, Color, EncodedImageFormat, Font, FontMgr, FontStyle, MaskFilter, Paint,
+    PathBuilder, RRect, Rect as SkRect, Surface, surfaces,
 };
 
 use crate::{
@@ -139,8 +139,7 @@ fn draw_path(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &PathPrim
 fn draw_text(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &TextPrimitive) {
     maybe_draw_shadow_text(canvas, item, primitive);
     let paint = paint_for_fill(item, primitive.fill.as_deref());
-    let mut font = Font::default();
-    font.set_size(primitive.font_size as f32);
+    let font = resolve_font(primitive);
     canvas.draw_str(
         primitive.text.as_str(),
         (primitive.origin.x as f32, primitive.origin.y as f32),
@@ -221,8 +220,7 @@ fn maybe_draw_shadow_text(
         return;
     };
     let paint = shadow_paint(item, shadow);
-    let mut font = Font::default();
-    font.set_size(primitive.font_size as f32);
+    let font = resolve_font(primitive);
     canvas.draw_str(
         primitive.text.as_str(),
         (
@@ -232,6 +230,25 @@ fn maybe_draw_shadow_text(
         &font,
         &paint,
     );
+}
+
+fn resolve_font(primitive: &TextPrimitive) -> Font {
+    let mut font = Font::default();
+    font.set_size(primitive.font_size as f32);
+
+    let font_mgr = FontMgr::new();
+    let typeface = primitive
+        .font_family
+        .as_deref()
+        .and_then(|family| font_mgr.match_family_style(family, FontStyle::normal()))
+        .or_else(|| font_mgr.match_family_style("Arial", FontStyle::normal()))
+        .or_else(|| font_mgr.match_family_style("Helvetica", FontStyle::normal()));
+
+    if let Some(typeface) = typeface {
+        font.set_typeface(typeface);
+    }
+
+    font
 }
 
 fn parse_color(background: &RenderBackground) -> Color {

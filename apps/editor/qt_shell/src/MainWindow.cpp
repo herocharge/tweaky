@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 
+#include <algorithm>
+#include <cmath>
 #include <QAction>
 #include <QApplication>
 #include <QDockWidget>
@@ -88,7 +90,35 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
       return offset - base;
     };
 
+    auto drawApproxBlur = [&](auto drawFn) {
+      if (item.blurRadius <= 0.0) {
+        return;
+      }
+
+      const int passes = std::clamp(static_cast<int>(std::ceil(item.blurRadius / 2.0)), 1, 6);
+      QColor blurColor = fill;
+      blurColor.setAlphaF(0.08);
+
+      for (int dy = -passes; dy <= passes; ++dy) {
+        for (int dx = -passes; dx <= passes; ++dx) {
+          if (dx == 0 && dy == 0) {
+            continue;
+          }
+          painter.save();
+          painter.translate(dx, dy);
+          drawFn(blurColor);
+          painter.restore();
+        }
+      }
+    };
+
     if (item.kind == "Rectangle" && item.hasBounds) {
+      drawApproxBlur([&](const QColor& blurColor) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(blurColor);
+        painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
+                                item.cornerRadius);
+      });
       if (item.hasShadow) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(item.shadow.color);
@@ -101,6 +131,11 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
       painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
                               item.cornerRadius);
     } else if (item.kind == "Ellipse" && item.hasBounds) {
+      drawApproxBlur([&](const QColor& blurColor) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(blurColor);
+        painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
+      });
       if (item.hasShadow) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(item.shadow.color);
@@ -126,6 +161,20 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         painter.drawPath(shadowPath);
       }
 
+      drawApproxBlur([&](const QColor& blurColor) {
+        QPainterPath blurPath;
+        blurPath.moveTo(mapScenePoint(item.points.first(), canvasRect));
+        for (qsizetype index = 1; index < item.points.size(); ++index) {
+          blurPath.lineTo(mapScenePoint(item.points.at(index), canvasRect));
+        }
+        if (item.closed) {
+          blurPath.closeSubpath();
+        }
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(blurColor);
+        painter.drawPath(blurPath);
+      });
+
       QPainterPath path;
       path.moveTo(mapScenePoint(item.points.first(), canvasRect));
       for (qsizetype index = 1; index < item.points.size(); ++index) {
@@ -144,6 +193,10 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         textFont.setFamily(item.fontFamily);
       }
       painter.setFont(textFont);
+      drawApproxBlur([&](const QColor& blurColor) {
+        painter.setPen(blurColor);
+        painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
+      });
       if (item.hasShadow) {
         painter.setPen(item.shadow.color);
         painter.drawText(mapScenePoint(item.origin, canvasRect) + shadowOffsetForItem(item),
