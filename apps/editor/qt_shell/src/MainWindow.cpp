@@ -112,6 +112,27 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
       }
     };
 
+    auto drawApproxShadow = [&](auto drawFn) {
+      if (!item.hasShadow) {
+        return;
+      }
+
+      const QPointF offset = shadowOffsetForItem(item);
+      const int passes =
+          std::clamp(static_cast<int>(std::ceil(item.shadow.blurRadius / 4.0)), 1, 6);
+      QColor shadowColor = item.shadow.color;
+      shadowColor.setAlphaF(std::max(0.04, shadowColor.alphaF() * 0.08));
+
+      for (int dy = -passes; dy <= passes; ++dy) {
+        for (int dx = -passes; dx <= passes; ++dx) {
+          painter.save();
+          painter.translate(offset.x() + dx, offset.y() + dy);
+          drawFn(shadowColor);
+          painter.restore();
+        }
+      }
+    };
+
     if (item.kind == "Rectangle" && item.hasBounds) {
       drawApproxBlur([&](const QColor& blurColor) {
         painter.setPen(Qt::NoPen);
@@ -119,13 +140,12 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
                                 item.cornerRadius);
       });
-      if (item.hasShadow) {
+      drawApproxShadow([&](const QColor& shadowColor) {
         painter.setPen(Qt::NoPen);
-        painter.setBrush(item.shadow.color);
-        painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect).translated(
-                                    shadowOffsetForItem(item)),
-                                item.cornerRadius, item.cornerRadius);
-      }
+        painter.setBrush(shadowColor);
+        painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
+                                item.cornerRadius);
+      });
       painter.setPen(QPen(stroke, 1.5));
       painter.setBrush(fill);
       painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
@@ -136,30 +156,28 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         painter.setBrush(blurColor);
         painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
       });
-      if (item.hasShadow) {
+      drawApproxShadow([&](const QColor& shadowColor) {
         painter.setPen(Qt::NoPen);
-        painter.setBrush(item.shadow.color);
-        painter.drawEllipse(mapSceneRect(item.bounds, canvasRect).translated(
-            shadowOffsetForItem(item)));
-      }
+        painter.setBrush(shadowColor);
+        painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
+      });
       painter.setPen(QPen(stroke, 1.5));
       painter.setBrush(fill);
       painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
     } else if (item.kind == "Path" && !item.points.isEmpty()) {
-      if (item.hasShadow) {
+      drawApproxShadow([&](const QColor& shadowColor) {
         QPainterPath shadowPath;
-        const QPointF offset = shadowOffsetForItem(item);
-        shadowPath.moveTo(mapScenePoint(item.points.first(), canvasRect) + offset);
+        shadowPath.moveTo(mapScenePoint(item.points.first(), canvasRect));
         for (qsizetype index = 1; index < item.points.size(); ++index) {
-          shadowPath.lineTo(mapScenePoint(item.points.at(index), canvasRect) + offset);
+          shadowPath.lineTo(mapScenePoint(item.points.at(index), canvasRect));
         }
         if (item.closed) {
           shadowPath.closeSubpath();
         }
         painter.setPen(Qt::NoPen);
-        painter.setBrush(item.shadow.color);
+        painter.setBrush(shadowColor);
         painter.drawPath(shadowPath);
-      }
+      });
 
       drawApproxBlur([&](const QColor& blurColor) {
         QPainterPath blurPath;
@@ -197,11 +215,10 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         painter.setPen(blurColor);
         painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
       });
-      if (item.hasShadow) {
-        painter.setPen(item.shadow.color);
-        painter.drawText(mapScenePoint(item.origin, canvasRect) + shadowOffsetForItem(item),
-                         item.text);
-      }
+      drawApproxShadow([&](const QColor& shadowColor) {
+        painter.setPen(shadowColor);
+        painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
+      });
       painter.setPen(fill);
       painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
     } else if (item.kind == "ImageLayer" && item.hasBounds) {
