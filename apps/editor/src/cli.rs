@@ -5,8 +5,9 @@ pub struct CliOptions {
     pub export_path: Option<PathBuf>,
     pub dump_view_model: bool,
     pub rename_node: Option<RenameNodeOptions>,
-    pub set_text: Option<NodeStringEdit>,
-    pub set_fill: Option<NodeStringEdit>,
+    pub set_position: Option<NodePositionEdit>,
+    pub set_params_json: Option<NodeJsonEdit>,
+    pub set_style_json: Option<NodeJsonEdit>,
     pub qt_shell_requested: bool,
 }
 
@@ -15,9 +16,15 @@ pub struct RenameNodeOptions {
     pub new_name: String,
 }
 
-pub struct NodeStringEdit {
+pub struct NodeJsonEdit {
     pub node_id: String,
-    pub value: String,
+    pub json: String,
+}
+
+pub struct NodePositionEdit {
+    pub node_id: String,
+    pub x: f64,
+    pub y: f64,
 }
 
 impl CliOptions {
@@ -29,8 +36,9 @@ impl CliOptions {
         let mut export_path = None;
         let mut dump_view_model = false;
         let mut rename_node = None;
-        let mut set_text = None;
-        let mut set_fill = None;
+        let mut set_position = None;
+        let mut set_params_json = None;
+        let mut set_style_json = None;
         let mut qt_shell_requested = false;
 
         while let Some(arg) = args.next() {
@@ -56,23 +64,39 @@ impl CliOptions {
                         .ok_or_else(|| "--rename-node requires a new name".to_string())?;
                     rename_node = Some(RenameNodeOptions { node_id, new_name });
                 }
-                "--set-text" => {
+                "--set-position" => {
                     let node_id = args
                         .next()
-                        .ok_or_else(|| "--set-text requires a node id".to_string())?;
-                    let value = args
+                        .ok_or_else(|| "--set-position requires a node id".to_string())?;
+                    let x = args
                         .next()
-                        .ok_or_else(|| "--set-text requires a text value".to_string())?;
-                    set_text = Some(NodeStringEdit { node_id, value });
+                        .ok_or_else(|| "--set-position requires an x value".to_string())?
+                        .parse::<f64>()
+                        .map_err(|error| format!("invalid x value for --set-position: {error}"))?;
+                    let y = args
+                        .next()
+                        .ok_or_else(|| "--set-position requires a y value".to_string())?
+                        .parse::<f64>()
+                        .map_err(|error| format!("invalid y value for --set-position: {error}"))?;
+                    set_position = Some(NodePositionEdit { node_id, x, y });
                 }
-                "--set-fill" => {
+                "--set-params-json" => {
                     let node_id = args
                         .next()
-                        .ok_or_else(|| "--set-fill requires a node id".to_string())?;
-                    let value = args
+                        .ok_or_else(|| "--set-params-json requires a node id".to_string())?;
+                    let json = args
                         .next()
-                        .ok_or_else(|| "--set-fill requires a fill value".to_string())?;
-                    set_fill = Some(NodeStringEdit { node_id, value });
+                        .ok_or_else(|| "--set-params-json requires a json object".to_string())?;
+                    set_params_json = Some(NodeJsonEdit { node_id, json });
+                }
+                "--set-style-json" => {
+                    let node_id = args
+                        .next()
+                        .ok_or_else(|| "--set-style-json requires a node id".to_string())?;
+                    let json = args
+                        .next()
+                        .ok_or_else(|| "--set-style-json requires a json object".to_string())?;
+                    set_style_json = Some(NodeJsonEdit { node_id, json });
                 }
                 "--help" | "-h" => {
                     return Err(Self::usage());
@@ -91,8 +115,9 @@ impl CliOptions {
             export_path,
             dump_view_model,
             rename_node,
-            set_text,
-            set_fill,
+            set_position,
+            set_params_json,
+            set_style_json,
             qt_shell_requested,
         })
     }
@@ -100,7 +125,7 @@ impl CliOptions {
     pub fn usage() -> String {
         [
             "Usage:",
-            "  cargo run -p editor -- [scene-path] [--export output.png] [--dump-view-model] [--rename-node node-id new-name] [--set-text node-id text] [--set-fill node-id color] [--qt]",
+            "  cargo run -p editor -- [scene-path] [--export output.png] [--dump-view-model] [--rename-node node-id new-name] [--set-position node-id x y] [--set-params-json node-id json] [--set-style-json node-id json] [--qt]",
             "",
             "Defaults:",
             "  scene-path = examples/basic_poster.vsd.json",
@@ -108,6 +133,7 @@ impl CliOptions {
             "Notes:",
             "  --dump-view-model prints the editor-facing JSON payload used by the Qt shell",
             "  edit flags write changes back to the scene path before continuing",
+            "  json flags expect a full JSON object string like {\"fill\":\"#dd6b42\"}",
         ]
         .join("\n")
     }
@@ -150,8 +176,9 @@ mod tests {
         );
         assert!(!options.dump_view_model);
         assert!(options.rename_node.is_none());
-        assert!(options.set_text.is_none());
-        assert!(options.set_fill.is_none());
+        assert!(options.set_position.is_none());
+        assert!(options.set_params_json.is_none());
+        assert!(options.set_style_json.is_none());
         assert!(options.qt_shell_requested);
     }
 
@@ -181,25 +208,38 @@ mod tests {
     }
 
     #[test]
-    fn parses_text_and_fill_flags() {
+    fn parses_position_and_json_flags() {
         let options = CliOptions::parse(vec![
             "editor".to_string(),
             "examples/basic_poster.vsd.json".to_string(),
-            "--set-text".to_string(),
+            "--set-position".to_string(),
             "headline".to_string(),
-            "MAKE IT YOURS".to_string(),
-            "--set-fill".to_string(),
+            "320".to_string(),
+            "360".to_string(),
+            "--set-params-json".to_string(),
             "headline".to_string(),
-            "#112233".to_string(),
+            "{\"text\":\"JSON MODE\"}".to_string(),
+            "--set-style-json".to_string(),
+            "headline".to_string(),
+            "{\"fill\":\"#112233\"}".to_string(),
         ])
         .expect("parse should work");
 
-        let text = options.set_text.expect("text edit should exist");
-        assert_eq!(text.node_id, "headline");
-        assert_eq!(text.value, "MAKE IT YOURS");
+        let position = options.set_position.expect("position edit should exist");
+        assert_eq!(position.node_id, "headline");
+        assert_eq!(position.x, 320.0);
+        assert_eq!(position.y, 360.0);
 
-        let fill = options.set_fill.expect("fill edit should exist");
-        assert_eq!(fill.node_id, "headline");
-        assert_eq!(fill.value, "#112233");
+        let params = options
+            .set_params_json
+            .expect("params json edit should exist");
+        assert_eq!(params.node_id, "headline");
+        assert_eq!(params.json, "{\"text\":\"JSON MODE\"}");
+
+        let style = options
+            .set_style_json
+            .expect("style json edit should exist");
+        assert_eq!(style.node_id, "headline");
+        assert_eq!(style.json, "{\"fill\":\"#112233\"}");
     }
 }

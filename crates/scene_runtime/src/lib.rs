@@ -195,6 +195,13 @@ impl RuntimeDocument {
                 node.transform = transform;
                 Ok(())
             }
+            DocumentCommand::SetNodePosition { node_id, x, y } => {
+                let node = find_node_mut(&mut self.scene.document.root, &node_id)
+                    .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
+                node.transform.x = x;
+                node.transform.y = y;
+                Ok(())
+            }
             DocumentCommand::SetNodeParamString {
                 node_id,
                 key,
@@ -213,6 +220,18 @@ impl RuntimeDocument {
                 let node = find_node_mut(&mut self.scene.document.root, &node_id)
                     .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
                 set_object_string(&mut node.style, &key, value);
+                Ok(())
+            }
+            DocumentCommand::SetNodeParamsObject { node_id, params } => {
+                let node = find_node_mut(&mut self.scene.document.root, &node_id)
+                    .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
+                node.params = params;
+                Ok(())
+            }
+            DocumentCommand::SetNodeStyleObject { node_id, style } => {
+                let node = find_node_mut(&mut self.scene.document.root, &node_id)
+                    .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
+                node.style = style;
                 Ok(())
             }
             DocumentCommand::InsertChild {
@@ -272,6 +291,11 @@ pub enum DocumentCommand {
         node_id: String,
         transform: Transform,
     },
+    SetNodePosition {
+        node_id: String,
+        x: f64,
+        y: f64,
+    },
     SetNodeParamString {
         node_id: String,
         key: String,
@@ -281,6 +305,14 @@ pub enum DocumentCommand {
         node_id: String,
         key: String,
         value: String,
+    },
+    SetNodeParamsObject {
+        node_id: String,
+        params: JsonObject,
+    },
+    SetNodeStyleObject {
+        node_id: String,
+        style: JsonObject,
     },
     InsertChild {
         parent_id: String,

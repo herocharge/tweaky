@@ -52,12 +52,12 @@ Current prototype status:
 - Falls back to raw `.vsd.json` loading if the Rust CLI is unavailable
 - Displays hierarchy, inspector, and a simple canvas preview driven by Rust-fed render items
 - Exposes `File` actions for open, reload, export PNG, and quit
-- Supports selected-node name, text, and fill edits from the inspector via the Rust editor CLI
+- Supports selected-node name, `x`/`y`, raw `params`, and raw `style` edits from the inspector via the Rust editor CLI
 - Compiles successfully against local Qt 6
 
 ## Short-Term Next Steps
 
 1. Keep the editor state model stable as the shell evolves
-2. Add more editable properties through the Rust app layer beyond name/text/fill
+2. Add more editable properties through the Rust app layer beyond name/position/raw-json
 3. Add save/save-as behavior that keeps Rust responsible for document I/O semantics
 4. Replace more fallback-only Qt logic with Rust-owned view/state data over time

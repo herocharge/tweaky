@@ -191,24 +191,36 @@ void MainWindow::buildUi() {
 
   auto* inspectorPanel = new QWidget(this);
   auto* inspectorLayout = new QVBoxLayout(inspectorPanel);
-  auto* renameForm = new QFormLayout();
+  auto* inspectorForm = new QFormLayout();
   nameEdit_ = new QLineEdit(inspectorPanel);
   nameEdit_->setPlaceholderText("Selected node name");
-  renameForm->addRow("Name", nameEdit_);
-  textEdit_ = new QPlainTextEdit(inspectorPanel);
-  textEdit_->setPlaceholderText("Text content for text nodes");
-  textEdit_->setFixedHeight(88);
-  renameForm->addRow("Text", textEdit_);
-  fillEdit_ = new QLineEdit(inspectorPanel);
-  fillEdit_->setPlaceholderText("#RRGGBB or #RRGGBBAA");
-  renameForm->addRow("Fill", fillEdit_);
-  inspectorLayout->addLayout(renameForm);
+  inspectorForm->addRow("Name", nameEdit_);
+
+  xSpin_ = new QDoubleSpinBox(inspectorPanel);
+  xSpin_->setRange(-100000.0, 100000.0);
+  xSpin_->setDecimals(2);
+  inspectorForm->addRow("X", xSpin_);
+
+  ySpin_ = new QDoubleSpinBox(inspectorPanel);
+  ySpin_->setRange(-100000.0, 100000.0);
+  ySpin_->setDecimals(2);
+  inspectorForm->addRow("Y", ySpin_);
+
+  paramsEdit_ = new QPlainTextEdit(inspectorPanel);
+  paramsEdit_->setPlaceholderText("{\n  \"width\": 1360\n}");
+  paramsEdit_->setFixedHeight(140);
+  inspectorForm->addRow("Params JSON", paramsEdit_);
+
+  styleEdit_ = new QPlainTextEdit(inspectorPanel);
+  styleEdit_->setPlaceholderText("{\n  \"fill\": \"#dd6b42\"\n}");
+  styleEdit_->setFixedHeight(140);
+  inspectorForm->addRow("Style JSON", styleEdit_);
+  inspectorLayout->addLayout(inspectorForm);
 
   applyEditsButton_ = new QPushButton("Apply Properties", inspectorPanel);
   inspectorLayout->addWidget(applyEditsButton_);
   connect(applyEditsButton_, &QPushButton::clicked, this, &MainWindow::applyNodeEdits);
   connect(nameEdit_, &QLineEdit::returnPressed, this, &MainWindow::applyNodeEdits);
-  connect(fillEdit_, &QLineEdit::returnPressed, this, &MainWindow::applyNodeEdits);
 
   inspectorText_ = new QTextEdit(this);
   inspectorText_->setReadOnly(true);
@@ -334,15 +346,23 @@ void MainWindow::applyNodeEdits() {
     return;
   }
 
-  const QString textValue = textEdit_->toPlainText();
-  const QString fillValue = fillEdit_->text().trimmed();
-  if (!fillValue.isEmpty() && !fillValue.startsWith('#')) {
-    QMessageBox::information(this, "Invalid Fill",
-                             "Fill should be a hex color like #dd6b42.");
+  const QString paramsJson = paramsEdit_->toPlainText().trimmed();
+  const QString styleJson = styleEdit_->toPlainText().trimmed();
+  const auto paramsDocument = QJsonDocument::fromJson(paramsJson.toUtf8());
+  if (!paramsDocument.isObject()) {
+    QMessageBox::information(this, "Invalid Params JSON",
+                             "Params must be a valid JSON object.");
+    return;
+  }
+  const auto styleDocument = QJsonDocument::fromJson(styleJson.toUtf8());
+  if (!styleDocument.isObject()) {
+    QMessageBox::information(this, "Invalid Style JSON",
+                             "Style must be a valid JSON object.");
     return;
   }
 
-  if (!applyNodePropertyEdits(scene_.selectedNodeId, newName, textValue, fillValue)) {
+  if (!applyNodePropertyEdits(scene_.selectedNodeId, newName, xSpin_->value(), ySpin_->value(),
+                              paramsJson, styleJson)) {
     QMessageBox::warning(this, "Apply Failed",
                          QString("tweaky could not update node %1.")
                              .arg(scene_.selectedNodeId));
@@ -395,23 +415,20 @@ bool MainWindow::exportSceneToPng(const QString& outputPath) {
   return true;
 }
 
-bool MainWindow::applyNodePropertyEdits(const QString& nodeId, const QString& newName,
-                                        const QString& textValue, const QString& fillValue) {
+bool MainWindow::applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x,
+                                        double y, const QString& paramsJson,
+                                        const QString& styleJson) {
   if (scene_.sourcePath.isEmpty()) {
     return false;
   }
 
   QProcess process(this);
   process.setProgram(editorCliPath());
-  QStringList arguments = {scene_.sourcePath, "--rename-node", nodeId, newName};
-
-  const auto selectedNode = nodeIndex_.value(nodeId);
-  if (selectedNode.params.contains("text")) {
-    arguments << "--set-text" << nodeId << textValue;
-  }
-  if (!fillValue.isEmpty() || selectedNode.style.contains("fill")) {
-    arguments << "--set-fill" << nodeId << fillValue;
-  }
+  QStringList arguments = {scene_.sourcePath, "--rename-node", nodeId, newName,
+                           "--set-position", nodeId,
+                           QString::number(x, 'f', 2), QString::number(y, 'f', 2),
+                           "--set-params-json", nodeId, paramsJson,
+                           "--set-style-json", nodeId, styleJson};
 
   process.setArguments(arguments);
   process.start();
@@ -471,6 +488,8 @@ bool MainWindow::loadSceneFromEditorCli(const QString& scenePath) {
     node.id = object.value("id").toString();
     node.type = object.value("node_type").toString();
     node.name = object.value("name").toString();
+    node.positionX = object.value("position_x").toDouble();
+    node.positionY = object.value("position_y").toDouble();
     node.params = object.value("params").toObject();
     node.style = object.value("style").toObject();
     const auto bounds = object.value("bounds").toObject();
@@ -560,6 +579,9 @@ bool MainWindow::loadSceneFromRawJson(const QString& scenePath) {
     data.id = node.value("id").toString();
     data.type = node.value("type").toString();
     data.name = node.value("name").toString();
+    const auto transform = node.value("transform").toObject();
+    data.positionX = transform.value("x").toDouble();
+    data.positionY = transform.value("y").toDouble();
     data.params = node.value("params").toObject();
     data.style = node.value("style").toObject();
     scene_.nodes.push_back(data);
@@ -650,8 +672,10 @@ void MainWindow::updateInspector(const SceneNodeData& node) {
 
 void MainWindow::populateInspectorFields(const SceneNodeData& node) {
   nameEdit_->setText(node.name);
-  textEdit_->setPlainText(node.params.value("text").toString());
-  fillEdit_->setText(node.style.value("fill").toString());
+  xSpin_->setValue(node.positionX);
+  ySpin_->setValue(node.positionY);
+  paramsEdit_->setPlainText(objectToPrettyJson(node.params));
+  styleEdit_->setPlainText(objectToPrettyJson(node.style));
 }
 
 QString MainWindow::objectToPrettyJson(const QJsonObject& object) const {

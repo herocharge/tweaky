@@ -3,7 +3,7 @@ mod cli;
 mod qt_shell;
 
 use app::EditorApp;
-use cli::{CliOptions, NodeStringEdit, RenameNodeOptions};
+use cli::{CliOptions, NodeJsonEdit, NodePositionEdit, RenameNodeOptions};
 
 fn main() {
     if let Err(message) = run() {
@@ -14,8 +14,10 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let options = CliOptions::parse(std::env::args())?;
-    let has_edits =
-        options.rename_node.is_some() || options.set_text.is_some() || options.set_fill.is_some();
+    let has_edits = options.rename_node.is_some()
+        || options.set_position.is_some()
+        || options.set_params_json.is_some()
+        || options.set_style_json.is_some();
     let mut app = EditorApp::open_path(&options.scene_path).map_err(|error| error.to_string())?;
 
     if let Some(RenameNodeOptions { node_id, new_name }) = &options.rename_node {
@@ -23,13 +25,20 @@ fn run() -> Result<(), String> {
             .map_err(|error| error.to_string())?;
     }
 
-    if let Some(NodeStringEdit { node_id, value }) = &options.set_text {
-        app.set_text_content(node_id, value.clone())
+    if let Some(NodePositionEdit { node_id, x, y }) = &options.set_position {
+        app.set_position(node_id, *x, *y)
             .map_err(|error| error.to_string())?;
     }
 
-    if let Some(NodeStringEdit { node_id, value }) = &options.set_fill {
-        app.set_fill_color(node_id, value.clone())
+    if let Some(NodeJsonEdit { node_id, json }) = &options.set_params_json {
+        let params = parse_json_object(json, "--set-params-json")?;
+        app.replace_node_params(node_id, params)
+            .map_err(|error| error.to_string())?;
+    }
+
+    if let Some(NodeJsonEdit { node_id, json }) = &options.set_style_json {
+        let style = parse_json_object(json, "--set-style-json")?;
+        app.replace_node_style(node_id, style)
             .map_err(|error| error.to_string())?;
     }
 
@@ -82,4 +91,16 @@ fn run() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn parse_json_object(
+    input: &str,
+    flag_name: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let value: serde_json::Value = serde_json::from_str(input)
+        .map_err(|error| format!("{flag_name} expected valid JSON: {error}"))?;
+    value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| format!("{flag_name} expected a JSON object"))
 }

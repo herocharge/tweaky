@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QMap>
 #include <QRectF>
+#include <QDoubleSpinBox>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -37,6 +38,8 @@ struct SceneNodeData {
     QString id;
     QString type;
     QString name;
+    double positionX = 0.0;
+    double positionY = 0.0;
     QJsonObject params;
     QJsonObject style;
     bool hasBounds = false;
@@ -119,8 +122,8 @@ private:
   void populateInspectorFields(const SceneNodeData& node);
   void updateWindowTitle();
   bool exportSceneToPng(const QString& outputPath);
-  bool applyNodePropertyEdits(const QString& nodeId, const QString& newName,
-                              const QString& textValue, const QString& fillValue);
+  bool applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x, double y,
+                              const QString& paramsJson, const QString& styleJson);
   bool loadSceneFromEditorCli(const QString& scenePath);
   bool loadSceneFromRawJson(const QString& scenePath);
   QTreeWidgetItem* findTreeItemByNodeId(const QString& nodeId) const;
@@ -131,8 +134,10 @@ private:
   QMap<QString, SceneNodeData> nodeIndex_;
   QTreeWidget* hierarchyTree_ = nullptr;
   QLineEdit* nameEdit_ = nullptr;
-  QPlainTextEdit* textEdit_ = nullptr;
-  QLineEdit* fillEdit_ = nullptr;
+  QDoubleSpinBox* xSpin_ = nullptr;
+  QDoubleSpinBox* ySpin_ = nullptr;
+  QPlainTextEdit* paramsEdit_ = nullptr;
+  QPlainTextEdit* styleEdit_ = nullptr;
   QPushButton* applyEditsButton_ = nullptr;
   QTextEdit* inspectorText_ = nullptr;
   CanvasWidget* canvas_ = nullptr;

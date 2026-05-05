@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use renderer::{RenderItem, RenderKind, RenderPlan};
 use scene_runtime::{ComponentRegistry, DocumentCommand, Point, Rect, RuntimeDocument};
-use scene_schema::{SceneFile, parse_scene_str};
+use scene_schema::{JsonObject, SceneFile, parse_scene_str};
 use serde::Serialize;
 
 pub struct EditorApp {
@@ -104,17 +104,13 @@ impl EditorApp {
         Ok(())
     }
 
-    pub fn set_text_content(
-        &mut self,
-        node_id: &str,
-        new_text: impl Into<String>,
-    ) -> Result<(), EditorError> {
+    pub fn set_position(&mut self, node_id: &str, x: f64, y: f64) -> Result<(), EditorError> {
         self.state
             .runtime
-            .apply(DocumentCommand::SetNodeParamString {
+            .apply(DocumentCommand::SetNodePosition {
                 node_id: node_id.to_string(),
-                key: "text".to_string(),
-                value: new_text.into(),
+                x,
+                y,
             })
             .map_err(EditorError::CommandFailed)?;
         self.refresh_derived_state();
@@ -122,17 +118,33 @@ impl EditorApp {
         Ok(())
     }
 
-    pub fn set_fill_color(
+    pub fn replace_node_params(
         &mut self,
         node_id: &str,
-        new_fill: impl Into<String>,
+        params: JsonObject,
     ) -> Result<(), EditorError> {
         self.state
             .runtime
-            .apply(DocumentCommand::SetNodeStyleString {
+            .apply(DocumentCommand::SetNodeParamsObject {
                 node_id: node_id.to_string(),
-                key: "fill".to_string(),
-                value: new_fill.into(),
+                params,
+            })
+            .map_err(EditorError::CommandFailed)?;
+        self.refresh_derived_state();
+        self.state.selected_node_id = Some(node_id.to_string());
+        Ok(())
+    }
+
+    pub fn replace_node_style(
+        &mut self,
+        node_id: &str,
+        style: JsonObject,
+    ) -> Result<(), EditorError> {
+        self.state
+            .runtime
+            .apply(DocumentCommand::SetNodeStyleObject {
+                node_id: node_id.to_string(),
+                style,
             })
             .map_err(EditorError::CommandFailed)?;
         self.refresh_derived_state();
@@ -173,6 +185,8 @@ impl EditorApp {
                 id: node.id.clone(),
                 node_type: format!("{:?}", node.node_type),
                 name: node.name.clone(),
+                position_x: node.transform.x,
+                position_y: node.transform.y,
                 params: serde_json::Value::Object(node.params.clone()),
                 style: serde_json::Value::Object(node.style.clone()),
                 bounds: self
@@ -269,6 +283,8 @@ pub struct EditorNodeViewModel {
     pub id: String,
     pub node_type: String,
     pub name: String,
+    pub position_x: f64,
+    pub position_y: f64,
     pub params: serde_json::Value,
     pub style: serde_json::Value,
     pub bounds: Option<EditorRectViewModel>,
@@ -609,28 +625,40 @@ mod tests {
     }
 
     #[test]
-    fn updates_text_content_and_fill_color() {
+    fn replaces_params_style_and_position() {
         let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
         let mut app = EditorApp::from_scene(PathBuf::from("basic_poster.vsd.json"), scene)
             .expect("editor app should initialize");
+        let params = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
+            r#"{"text":"JSON MODE","fontFamily":"Inter","fontSize":72,"lineHeight":1.0}"#,
+        )
+        .expect("params json should parse");
+        let style = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(
+            r##"{"fill":"#445566"}"##,
+        )
+        .expect("style json should parse");
 
-        app.set_text_content("headline", "MAKE IT YOURS")
-            .expect("text update should succeed");
-        app.set_fill_color("headline", "#112233")
-            .expect("fill update should succeed");
+        app.set_position("headline", 320.0, 360.0)
+            .expect("position update should succeed");
+        app.replace_node_params("headline", params)
+            .expect("params replace should succeed");
+        app.replace_node_style("headline", style)
+            .expect("style replace should succeed");
 
         let headline = app
             .state
             .runtime
             .find_node("headline")
             .expect("headline should exist");
+        assert_eq!(headline.transform.x, 320.0);
+        assert_eq!(headline.transform.y, 360.0);
         assert_eq!(
             headline
                 .text_params()
                 .expect("text params should exist")
                 .text,
-            "MAKE IT YOURS"
+            "JSON MODE"
         );
-        assert_eq!(headline.style_fill().as_deref(), Some("#112233"));
+        assert_eq!(headline.style_fill().as_deref(), Some("#445566"));
     }
 }
