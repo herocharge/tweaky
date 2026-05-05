@@ -530,3 +530,4 @@ Current leaning:
 - Put shared geometry and hit-testing semantics in core/runtime land rather than tying editor behavior to Skia-specific APIs
 - Let renderer consume runtime geometry semantics where practical instead of duplicating bounds math
 - Grow geometry support incrementally: start with simple point-list paths before attempting richer vector semantics
+- Prefer more accurate hit testing for editable nodes when the geometry is simple enough to support reliably

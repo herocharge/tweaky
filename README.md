@@ -26,6 +26,12 @@ Current rendering coverage:
 - `Path` with point-list geometry
 - `ImageLayer` planning support
 
+Current interaction coverage:
+
+- shared bounds computation in `scene_runtime`
+- topmost-first scene hit testing
+- polygon-aware hit testing for closed `Path` nodes
+
 Useful renderer commands:
 
 - `cargo test`

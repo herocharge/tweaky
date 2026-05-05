@@ -98,6 +98,7 @@ Currently implemented:
 - `renderer` crate with render plan generation, primitive extraction, and optional Skia CPU PNG export
 - `renderer` now uses `scene_runtime` as the source of truth for shared bounds semantics
 - Basic `Path` support now exists end-to-end through typed params, runtime bounds, render planning, and Skia drawing
+- Closed `Path` nodes now participate in polygon-aware hit testing instead of only bounding-box selection
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
@@ -109,7 +110,7 @@ Currently implemented:
 Expected next implementation step:
 
 - Expand Skia rendering coverage beyond the current rectangle/ellipse/text/path baseline
-- Add richer geometry coverage for path/effect-like nodes so runtime and renderer can stay aligned on more than the easy primitives
+- Add effect-node semantics for `Shadow` and `Blur`
 - Decide whether more node families need typed accessors before renderer integration deepens
 
 ## Intended Repo Shape
@@ -198,7 +199,7 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 The next likely sequence is:
 
 1. Add effect-node semantics for `Shadow` and `Blur`
-2. Expand shared geometry beyond simple point-list paths
+2. Expand shared geometry beyond simple point-list paths where needed
 3. Start export-oriented render interfaces around file output instead of just byte buffers
 4. Decide whether more node families need typed accessors before editor work expands
 5. Commit and push each slice separately

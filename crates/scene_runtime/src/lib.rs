@@ -412,6 +412,36 @@ pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
     }
 }
 
+pub fn contains_point_for_node(node: &SceneNode, point: Point) -> bool {
+    match node.node_type {
+        scene_schema::NodeType::Path => {
+            let Some(params) = node.path_params() else {
+                return false;
+            };
+            let transformed_points = params
+                .points
+                .iter()
+                .map(|path_point| transform_point(&node.transform, path_point.x, path_point.y))
+                .collect::<Vec<_>>();
+
+            if transformed_points.len() < 3 {
+                return false;
+            }
+
+            if params.closed {
+                point_in_polygon(point, &transformed_points)
+            } else {
+                bounds_from_points(&node.transform, &params.points)
+                    .map(|bounds| bounds.contains(point))
+                    .unwrap_or(false)
+            }
+        }
+        _ => bounds_for_node(node)
+            .map(|bounds| bounds.contains(point))
+            .unwrap_or(false),
+    }
+}
+
 fn remove_node(node: &mut SceneNode, target_id: &str) -> Option<SceneNode> {
     if let Some(index) = node.children.iter().position(|child| child.id == target_id) {
         return Some(node.children.remove(index));
@@ -548,11 +578,30 @@ fn hit_test_node(node: &SceneNode, point: Point, hits: &mut Vec<String>) {
         hit_test_node(child, point, hits);
     }
 
-    if let Some(bounds) = bounds_for_node(node) {
-        if bounds.contains(point) {
-            hits.push(node.id.clone());
-        }
+    if contains_point_for_node(node, point) {
+        hits.push(node.id.clone());
     }
+}
+
+fn point_in_polygon(point: Point, polygon: &[Point]) -> bool {
+    let mut inside = false;
+    let mut previous = polygon[polygon.len() - 1];
+
+    for &current in polygon {
+        let intersects = ((current.y > point.y) != (previous.y > point.y))
+            && (point.x
+                < (previous.x - current.x) * (point.y - current.y)
+                    / ((previous.y - current.y) + f64::EPSILON)
+                    + current.x);
+
+        if intersects {
+            inside = !inside;
+        }
+
+        previous = current;
+    }
+
+    inside
 }
 
 #[cfg(test)]
@@ -561,7 +610,7 @@ mod tests {
 
     use super::{
         ComponentRegistry, DocumentCommand, Point, Rect, RuntimeDocument, bounds_for_node,
-        find_node, validate_registry_compatibility,
+        contains_point_for_node, find_node, validate_registry_compatibility,
     };
 
     const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
@@ -771,5 +820,28 @@ mod tests {
 
         assert!(bounds.width > 0.0);
         assert!(bounds.height > 0.0);
+    }
+
+    #[test]
+    fn path_hit_testing_uses_polygon_not_just_bounds() {
+        let shapes = parse_scene_str(SHAPES_STUDY).expect("shapes scene should parse");
+        let diamond = &shapes.document.root.children[2];
+        let bounds = bounds_for_node(diamond).expect("path bounds should exist");
+
+        assert!(contains_point_for_node(
+            diamond,
+            Point {
+                x: diamond.transform.x + 120.0,
+                y: diamond.transform.y + 120.0,
+            }
+        ));
+
+        assert!(!contains_point_for_node(
+            diamond,
+            Point {
+                x: bounds.x + 2.0,
+                y: bounds.y + 2.0,
+            }
+        ));
     }
 }
