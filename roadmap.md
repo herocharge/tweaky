@@ -35,7 +35,7 @@ Tasks:
 Suggested repo layout:
 
 ```text
-draw/
+tweaky/
   docs/
   apps/
     editor/

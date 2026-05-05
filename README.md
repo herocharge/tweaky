@@ -1,4 +1,4 @@
-# draw
+# tweaky
 
 An experiment in AI-assisted image creation through editable visual scene documents instead of direct bitmap generation.
 
