@@ -134,6 +134,14 @@ pub struct PathParams {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ShadowStyle {
+    pub color: String,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub blur_radius: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextParams {
     pub text: String,
     pub font_size: f64,
@@ -197,6 +205,20 @@ impl SceneNode {
 
     pub fn style_fill(&self) -> Option<String> {
         get_string(&self.style, "fill")
+    }
+
+    pub fn style_blur_radius(&self) -> Option<f64> {
+        get_number(&self.style, "blur")
+    }
+
+    pub fn style_shadow(&self) -> Option<ShadowStyle> {
+        let shadow = self.style.get("shadow")?.as_object()?;
+        Some(ShadowStyle {
+            color: shadow.get("color")?.as_str()?.to_string(),
+            offset_x: shadow.get("offsetX")?.as_f64()?,
+            offset_y: shadow.get("offsetY")?.as_f64()?,
+            blur_radius: shadow.get("blur")?.as_f64()?,
+        })
     }
 }
 
@@ -434,5 +456,21 @@ mod tests {
 
         assert_eq!(params.points.len(), 4);
         assert!(params.closed);
+    }
+
+    #[test]
+    fn exposes_style_effects() {
+        let parsed = parse_scene_str(BASIC_POSTER).expect("example scene should parse");
+        let shadow = parsed.document.root.children[1]
+            .style_shadow()
+            .expect("shadow should exist");
+
+        assert_eq!(shadow.color, "#40201088");
+        assert_eq!(shadow.offset_x, 10.0);
+        assert_eq!(shadow.blur_radius, 18.0);
+        assert_eq!(
+            parsed.document.root.children[0].style_blur_radius(),
+            Some(6.0)
+        );
     }
 }

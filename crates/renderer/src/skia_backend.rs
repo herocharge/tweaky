@@ -2,12 +2,13 @@ use std::fmt;
 use std::path::Path;
 
 use skia_safe::{
-    Color, EncodedImageFormat, Font, Paint, PathBuilder, RRect, Rect as SkRect, Surface, surfaces,
+    BlurStyle, Color, EncodedImageFormat, Font, MaskFilter, Paint, PathBuilder, RRect,
+    Rect as SkRect, Surface, surfaces,
 };
 
 use crate::{
     EllipsePrimitive, PathPrimitive, RenderBackground, RenderItem, RenderKind, RenderPlan,
-    TextPrimitive,
+    RenderShadow, TextPrimitive,
 };
 
 #[derive(Debug)]
@@ -83,6 +84,7 @@ pub fn render_plan_to_surface(plan: &RenderPlan, surface: &mut Surface) {
 fn draw_item(canvas: &skia_safe::Canvas, item: &RenderItem) {
     match &item.kind {
         RenderKind::Rectangle(primitive) => {
+            maybe_draw_shadow_rect(canvas, item, primitive.bounds);
             let paint = paint_for_fill(item, primitive.fill.as_deref());
             let rect = sk_rect(primitive.bounds);
             if primitive.corner_radius > 0.0 {
@@ -106,6 +108,7 @@ fn draw_item(canvas: &skia_safe::Canvas, item: &RenderItem) {
 }
 
 fn draw_ellipse(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &EllipsePrimitive) {
+    maybe_draw_shadow_oval(canvas, item, primitive.bounds);
     let paint = paint_for_fill(item, primitive.fill.as_deref());
     canvas.draw_oval(sk_rect(primitive.bounds), &paint);
 }
@@ -115,7 +118,6 @@ fn draw_path(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &PathPrim
         return;
     }
 
-    let paint = paint_for_fill(item, primitive.fill.as_deref());
     let mut path = PathBuilder::new();
     let first = primitive.points[0];
     path.move_to((first.x as f32, first.y as f32));
@@ -129,10 +131,13 @@ fn draw_path(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &PathPrim
     }
 
     let path = path.detach();
+    maybe_draw_shadow_path(canvas, item, &path);
+    let paint = paint_for_fill(item, primitive.fill.as_deref());
     canvas.draw_path(&path, &paint);
 }
 
 fn draw_text(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &TextPrimitive) {
+    maybe_draw_shadow_text(canvas, item, primitive);
     let paint = paint_for_fill(item, primitive.fill.as_deref());
     let mut font = Font::default();
     font.set_size(primitive.font_size as f32);
@@ -152,7 +157,81 @@ fn paint_for_fill(item: &RenderItem, fill: Option<&str>) -> Paint {
         item.opacity,
     );
     paint.set_color(color);
+    if let Some(blur_radius) = item.effects.blur_radius {
+        if blur_radius > 0.0 {
+            paint.set_mask_filter(MaskFilter::blur(
+                BlurStyle::Normal,
+                blur_radius as f32,
+                None,
+            ));
+        }
+    }
     paint
+}
+
+fn shadow_paint(item: &RenderItem, shadow: &RenderShadow) -> Paint {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(with_opacity(parse_color_str(&shadow.color), item.opacity));
+    if shadow.blur_radius > 0.0 {
+        paint.set_mask_filter(MaskFilter::blur(
+            BlurStyle::Normal,
+            shadow.blur_radius as f32,
+            None,
+        ));
+    }
+    paint
+}
+
+fn maybe_draw_shadow_rect(canvas: &skia_safe::Canvas, item: &RenderItem, bounds: crate::Rect) {
+    let Some(shadow) = &item.effects.shadow else {
+        return;
+    };
+    let paint = shadow_paint(item, shadow);
+    let rect = sk_rect(offset_rect(bounds, shadow.offset_x, shadow.offset_y));
+    canvas.draw_rect(rect, &paint);
+}
+
+fn maybe_draw_shadow_oval(canvas: &skia_safe::Canvas, item: &RenderItem, bounds: crate::Rect) {
+    let Some(shadow) = &item.effects.shadow else {
+        return;
+    };
+    let paint = shadow_paint(item, shadow);
+    let rect = sk_rect(offset_rect(bounds, shadow.offset_x, shadow.offset_y));
+    canvas.draw_oval(rect, &paint);
+}
+
+fn maybe_draw_shadow_path(canvas: &skia_safe::Canvas, item: &RenderItem, path: &skia_safe::Path) {
+    let Some(shadow) = &item.effects.shadow else {
+        return;
+    };
+    let paint = shadow_paint(item, shadow);
+    canvas.save();
+    canvas.translate((shadow.offset_x as f32, shadow.offset_y as f32));
+    canvas.draw_path(path, &paint);
+    canvas.restore();
+}
+
+fn maybe_draw_shadow_text(
+    canvas: &skia_safe::Canvas,
+    item: &RenderItem,
+    primitive: &TextPrimitive,
+) {
+    let Some(shadow) = &item.effects.shadow else {
+        return;
+    };
+    let paint = shadow_paint(item, shadow);
+    let mut font = Font::default();
+    font.set_size(primitive.font_size as f32);
+    canvas.draw_str(
+        primitive.text.as_str(),
+        (
+            (primitive.origin.x + shadow.offset_x) as f32,
+            (primitive.origin.y + shadow.offset_y) as f32,
+        ),
+        &font,
+        &paint,
+    );
 }
 
 fn parse_color(background: &RenderBackground) -> Color {
@@ -192,6 +271,15 @@ fn sk_rect(rect: crate::Rect) -> SkRect {
         rect.width as f32,
         rect.height as f32,
     )
+}
+
+fn offset_rect(rect: crate::Rect, dx: f64, dy: f64) -> crate::Rect {
+    crate::Rect {
+        x: rect.x + dx,
+        y: rect.y + dy,
+        width: rect.width,
+        height: rect.height,
+    }
 }
 
 fn with_opacity(color: Color, opacity: f64) -> Color {

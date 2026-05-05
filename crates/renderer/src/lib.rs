@@ -23,6 +23,21 @@ pub struct RenderItem {
     pub opacity: f64,
     pub blend_mode: scene_schema::BlendMode,
     pub bounds: Option<Rect>,
+    pub effects: RenderEffects,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RenderEffects {
+    pub blur_radius: Option<f64>,
+    pub shadow: Option<RenderShadow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderShadow {
+    pub color: String,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub blur_radius: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,6 +149,15 @@ fn node_to_render_item(node: &SceneNode) -> Option<RenderItem> {
         opacity: node.transform.opacity,
         blend_mode: node.blend_mode,
         bounds,
+        effects: RenderEffects {
+            blur_radius: node.style_blur_radius(),
+            shadow: node.style_shadow().map(|shadow| RenderShadow {
+                color: shadow.color,
+                offset_x: shadow.offset_x,
+                offset_y: shadow.offset_y,
+                blur_radius: shadow.blur_radius,
+            }),
+        },
     })
 }
 
@@ -233,6 +257,8 @@ mod tests {
         assert_eq!(plan.items.len(), 2);
         assert_eq!(plan.items[0].node_id, "bg_rect");
         assert_eq!(plan.items[1].node_id, "headline");
+        assert_eq!(plan.items[0].effects.blur_radius, Some(6.0));
+        assert!(plan.items[1].effects.shadow.is_some());
     }
 
     #[test]

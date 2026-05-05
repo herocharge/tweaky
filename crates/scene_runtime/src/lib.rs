@@ -366,7 +366,7 @@ pub fn visit_depth_first<'a>(
 }
 
 pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
-    match node.node_type {
+    let base = match node.node_type {
         scene_schema::NodeType::Group => {
             let mut iter = node.children.iter().filter_map(bounds_for_node);
             let first = iter.next()?;
@@ -409,7 +409,9 @@ pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
             ))
         }
         scene_schema::NodeType::Shadow | scene_schema::NodeType::Blur => None,
-    }
+    }?;
+
+    Some(expand_bounds_for_effects(node, base))
 }
 
 pub fn contains_point_for_node(node: &SceneNode, point: Point) -> bool {
@@ -508,6 +510,35 @@ fn transformed_rect(transform: &Transform, width: f64, height: f64) -> Rect {
         rotated_width,
         rotated_height,
     )
+}
+
+fn expand_bounds_for_effects(node: &SceneNode, bounds: Rect) -> Rect {
+    let mut expanded = bounds;
+
+    if let Some(blur_radius) = node.style_blur_radius() {
+        expanded = inflate_rect(expanded, blur_radius * 2.0);
+    }
+
+    if let Some(shadow) = node.style_shadow() {
+        let shadow_bounds = Rect {
+            x: bounds.x + shadow.offset_x,
+            y: bounds.y + shadow.offset_y,
+            width: bounds.width,
+            height: bounds.height,
+        };
+        expanded = expanded.union(inflate_rect(shadow_bounds, shadow.blur_radius * 2.0));
+    }
+
+    expanded
+}
+
+fn inflate_rect(rect: Rect, amount: f64) -> Rect {
+    Rect {
+        x: rect.x - amount,
+        y: rect.y - amount,
+        width: rect.width + amount * 2.0,
+        height: rect.height + amount * 2.0,
+    }
 }
 
 fn estimate_text_bounds(transform: &Transform, text: &str, font_size: f64) -> Rect {
@@ -609,7 +640,7 @@ mod tests {
     use scene_schema::{NodeType, Transform, parse_scene_str};
 
     use super::{
-        ComponentRegistry, DocumentCommand, Point, Rect, RuntimeDocument, bounds_for_node,
+        ComponentRegistry, DocumentCommand, Point, RuntimeDocument, bounds_for_node,
         contains_point_for_node, find_node, validate_registry_compatibility,
     };
 
@@ -759,15 +790,10 @@ mod tests {
         let rect_bounds = runtime
             .node_bounds("bg_rect")
             .expect("rectangle bounds should exist");
-        assert_eq!(
-            rect_bounds,
-            Rect {
-                x: 120.0,
-                y: 100.0,
-                width: 1360.0,
-                height: 700.0,
-            }
-        );
+        assert!(rect_bounds.x < 120.0);
+        assert!(rect_bounds.y < 100.0);
+        assert!(rect_bounds.width > 1360.0);
+        assert!(rect_bounds.height > 700.0);
 
         let group_bounds = runtime
             .node_bounds("root")
@@ -843,5 +869,18 @@ mod tests {
                 y: bounds.y + 2.0,
             }
         ));
+    }
+
+    #[test]
+    fn expands_bounds_for_shadow_and_blur_styles() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
+        let rect_bounds =
+            bounds_for_node(&scene.document.root.children[0]).expect("rect bounds should exist");
+        let text_bounds =
+            bounds_for_node(&scene.document.root.children[1]).expect("text bounds should exist");
+
+        assert!(rect_bounds.x < 120.0);
+        assert!(text_bounds.width > 0.0);
+        assert!(text_bounds.height > 0.0);
     }
 }

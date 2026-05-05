@@ -99,6 +99,7 @@ Currently implemented:
 - `renderer` now uses `scene_runtime` as the source of truth for shared bounds semantics
 - Basic `Path` support now exists end-to-end through typed params, runtime bounds, render planning, and Skia drawing
 - Closed `Path` nodes now participate in polygon-aware hit testing instead of only bounding-box selection
+- Style-level `blur` and `shadow` effects now affect bounds and Skia rendering
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
@@ -109,9 +110,9 @@ Currently implemented:
 
 Expected next implementation step:
 
-- Expand Skia rendering coverage beyond the current rectangle/ellipse/text/path baseline
-- Add effect-node semantics for `Shadow` and `Blur`
-- Decide whether more node families need typed accessors before renderer integration deepens
+- Begin Milestone 3 with the editor shell scaffold
+- Choose the first Qt integration shape for hierarchy, canvas host, and inspector surfaces
+- Keep renderer/runtime boundaries stable while the desktop shell comes online
 
 ## Intended Repo Shape
 
@@ -198,10 +199,10 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Add effect-node semantics for `Shadow` and `Blur`
-2. Expand shared geometry beyond simple point-list paths where needed
-3. Start export-oriented render interfaces around file output instead of just byte buffers
-4. Decide whether more node families need typed accessors before editor work expands
+1. Scaffold the editor application architecture around Qt
+2. Define the first canvas host boundary between the desktop shell and renderer
+3. Add minimal document-open/render workflow inside the editor app
+4. Add hierarchy and inspector placeholders with real scene data plumbing
 5. Commit and push each slice separately
 
 ## Notes For Future Codex Sessions

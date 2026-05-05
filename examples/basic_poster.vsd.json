@@ -53,7 +53,8 @@
             "cornerRadius": 28
           },
           "style": {
-            "fill": "#dd6b42"
+            "fill": "#dd6b42",
+            "blur": 6
           },
           "children": [],
           "meta": {}
@@ -80,7 +81,13 @@
             "lineHeight": 1.0
           },
           "style": {
-            "fill": "#fff8ee"
+            "fill": "#fff8ee",
+            "shadow": {
+              "color": "#40201088",
+              "offsetX": 10,
+              "offsetY": 14,
+              "blur": 18
+            }
           },
           "children": [],
           "meta": {}

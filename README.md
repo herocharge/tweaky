@@ -25,6 +25,7 @@ Current rendering coverage:
 - `Text`
 - `Path` with point-list geometry
 - `ImageLayer` planning support
+- style-level `blur` and `shadow` effects on drawable nodes
 
 Current interaction coverage:
 
@@ -53,3 +54,9 @@ Chosen stack:
 Near-term goal:
 
 Build an MVP desktop editor where AI generates a structured visual document that users can inspect, tweak, and export.
+
+Current project phase:
+
+- Milestone 1 complete
+- Milestone 2 functionally complete for the current MVP scope
+- Next focus: Milestone 3 editor shell

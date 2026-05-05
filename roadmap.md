@@ -245,6 +245,11 @@ Exit criteria:
 - Selection and bounds are trustworthy enough for editor work
 - Small edits do not require full document re-render in the common case
 
+Current status:
+
+- Functionally complete for the current MVP baseline
+- Remaining future work is mostly quality expansion, not milestone-blocking scope
+
 Risks:
 
 - Skia integration complexity
@@ -517,9 +522,9 @@ Avoid:
 
 ## Immediate Next Actions
 
-1. Expand schema validation where the current generic `params` model is too loose
-2. Extend the current Skia CPU renderer beyond the initial primitive subset and formalize export APIs
-3. Add shared geometry, bounds, and traversal contracts needed by rendering and editor selection
+1. Start Milestone 3 with the editor shell scaffold
+2. Decide the first Qt integration boundary for canvas hosting
+3. Add the smallest viable editor workflow that can load and render an example scene
 4. Keep pushing work to `origin/main` as focused commits land
 
 Current leaning:
