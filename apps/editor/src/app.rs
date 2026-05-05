@@ -104,6 +104,42 @@ impl EditorApp {
         Ok(())
     }
 
+    pub fn set_text_content(
+        &mut self,
+        node_id: &str,
+        new_text: impl Into<String>,
+    ) -> Result<(), EditorError> {
+        self.state
+            .runtime
+            .apply(DocumentCommand::SetNodeParamString {
+                node_id: node_id.to_string(),
+                key: "text".to_string(),
+                value: new_text.into(),
+            })
+            .map_err(EditorError::CommandFailed)?;
+        self.refresh_derived_state();
+        self.state.selected_node_id = Some(node_id.to_string());
+        Ok(())
+    }
+
+    pub fn set_fill_color(
+        &mut self,
+        node_id: &str,
+        new_fill: impl Into<String>,
+    ) -> Result<(), EditorError> {
+        self.state
+            .runtime
+            .apply(DocumentCommand::SetNodeStyleString {
+                node_id: node_id.to_string(),
+                key: "fill".to_string(),
+                value: new_fill.into(),
+            })
+            .map_err(EditorError::CommandFailed)?;
+        self.refresh_derived_state();
+        self.state.selected_node_id = Some(node_id.to_string());
+        Ok(())
+    }
+
     pub fn save_to_path(&self, output_path: impl AsRef<Path>) -> Result<(), EditorError> {
         let output_path = output_path.as_ref();
         let serialized = serde_json::to_string_pretty(self.state.runtime.scene())
@@ -570,5 +606,31 @@ mod tests {
             app.view_model().selected_node_id.as_deref(),
             Some("headline")
         );
+    }
+
+    #[test]
+    fn updates_text_content_and_fill_color() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
+        let mut app = EditorApp::from_scene(PathBuf::from("basic_poster.vsd.json"), scene)
+            .expect("editor app should initialize");
+
+        app.set_text_content("headline", "MAKE IT YOURS")
+            .expect("text update should succeed");
+        app.set_fill_color("headline", "#112233")
+            .expect("fill update should succeed");
+
+        let headline = app
+            .state
+            .runtime
+            .find_node("headline")
+            .expect("headline should exist");
+        assert_eq!(
+            headline
+                .text_params()
+                .expect("text params should exist")
+                .text,
+            "MAKE IT YOURS"
+        );
+        assert_eq!(headline.style_fill().as_deref(), Some("#112233"));
     }
 }

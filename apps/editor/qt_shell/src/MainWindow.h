@@ -7,6 +7,7 @@
 #include <QMap>
 #include <QRectF>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTreeWidget>
 #include <QTextEdit>
@@ -105,7 +106,7 @@ private slots:
   void openSceneDialog();
   void reloadScene();
   void exportPngDialog();
-  void applyNodeRename();
+  void applyNodeEdits();
   void handleTreeSelectionChanged();
 
 private:
@@ -115,9 +116,11 @@ private:
   void populateTree();
   void populateTreeNode(QTreeWidgetItem* parentItem, const SceneNodeData& node);
   void updateInspector(const SceneNodeData& node);
+  void populateInspectorFields(const SceneNodeData& node);
   void updateWindowTitle();
   bool exportSceneToPng(const QString& outputPath);
-  bool renameNode(const QString& nodeId, const QString& newName);
+  bool applyNodePropertyEdits(const QString& nodeId, const QString& newName,
+                              const QString& textValue, const QString& fillValue);
   bool loadSceneFromEditorCli(const QString& scenePath);
   bool loadSceneFromRawJson(const QString& scenePath);
   QTreeWidgetItem* findTreeItemByNodeId(const QString& nodeId) const;
@@ -128,7 +131,9 @@ private:
   QMap<QString, SceneNodeData> nodeIndex_;
   QTreeWidget* hierarchyTree_ = nullptr;
   QLineEdit* nameEdit_ = nullptr;
-  QPushButton* applyNameButton_ = nullptr;
+  QPlainTextEdit* textEdit_ = nullptr;
+  QLineEdit* fillEdit_ = nullptr;
+  QPushButton* applyEditsButton_ = nullptr;
   QTextEdit* inspectorText_ = nullptr;
   CanvasWidget* canvas_ = nullptr;
 };

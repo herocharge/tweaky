@@ -45,6 +45,7 @@ Useful editor commands:
 - `cargo run -p editor -- examples/basic_poster.vsd.json --export /tmp/tweaky-editor-smoke.png`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --dump-view-model`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --rename-node headline "Title Block"`
+- `cargo run -p editor -- examples/basic_poster.vsd.json --set-text headline "MAKE IT YOURS" --set-fill headline "#112233"`
 - `cmake -S apps/editor/qt_shell -B build/qt_shell -DCMAKE_PREFIX_PATH=$(brew --prefix qt)`
 - `cmake --build build/qt_shell`
 - `./build/qt_shell/tweaky-editor-qt examples/basic_poster.vsd.json`
@@ -70,4 +71,4 @@ Current project phase:
 
 - Milestone 1 complete
 - Milestone 2 functionally complete for the current MVP scope
-- Milestone 3 active with a real editor app scaffold, a compiled Qt shell prototype, a Rust-owned view-model boundary for hierarchy/inspector/canvas preview data, working Qt open/reload/export document actions, and the first inspector-driven edit path
+- Milestone 3 active with a real editor app scaffold, a compiled Qt shell prototype, a Rust-owned view-model boundary for hierarchy/inspector/canvas preview data, working Qt open/reload/export document actions, and inspector-driven name/text/fill edits

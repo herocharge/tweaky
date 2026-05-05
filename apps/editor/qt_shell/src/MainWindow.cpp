@@ -195,12 +195,20 @@ void MainWindow::buildUi() {
   nameEdit_ = new QLineEdit(inspectorPanel);
   nameEdit_->setPlaceholderText("Selected node name");
   renameForm->addRow("Name", nameEdit_);
+  textEdit_ = new QPlainTextEdit(inspectorPanel);
+  textEdit_->setPlaceholderText("Text content for text nodes");
+  textEdit_->setFixedHeight(88);
+  renameForm->addRow("Text", textEdit_);
+  fillEdit_ = new QLineEdit(inspectorPanel);
+  fillEdit_->setPlaceholderText("#RRGGBB or #RRGGBBAA");
+  renameForm->addRow("Fill", fillEdit_);
   inspectorLayout->addLayout(renameForm);
 
-  applyNameButton_ = new QPushButton("Apply Rename", inspectorPanel);
-  inspectorLayout->addWidget(applyNameButton_);
-  connect(applyNameButton_, &QPushButton::clicked, this, &MainWindow::applyNodeRename);
-  connect(nameEdit_, &QLineEdit::returnPressed, this, &MainWindow::applyNodeRename);
+  applyEditsButton_ = new QPushButton("Apply Properties", inspectorPanel);
+  inspectorLayout->addWidget(applyEditsButton_);
+  connect(applyEditsButton_, &QPushButton::clicked, this, &MainWindow::applyNodeEdits);
+  connect(nameEdit_, &QLineEdit::returnPressed, this, &MainWindow::applyNodeEdits);
+  connect(fillEdit_, &QLineEdit::returnPressed, this, &MainWindow::applyNodeEdits);
 
   inspectorText_ = new QTextEdit(this);
   inspectorText_->setReadOnly(true);
@@ -313,10 +321,10 @@ void MainWindow::exportPngDialog() {
   }
 }
 
-void MainWindow::applyNodeRename() {
+void MainWindow::applyNodeEdits() {
   if (scene_.selectedNodeId.isEmpty()) {
     QMessageBox::information(this, "Nothing Selected",
-                             "Select a node before applying a rename.");
+                             "Select a node before applying edits.");
     return;
   }
 
@@ -326,9 +334,18 @@ void MainWindow::applyNodeRename() {
     return;
   }
 
-  if (!renameNode(scene_.selectedNodeId, newName)) {
-    QMessageBox::warning(this, "Rename Failed",
-                         QString("tweaky could not rename node %1.").arg(scene_.selectedNodeId));
+  const QString textValue = textEdit_->toPlainText();
+  const QString fillValue = fillEdit_->text().trimmed();
+  if (!fillValue.isEmpty() && !fillValue.startsWith('#')) {
+    QMessageBox::information(this, "Invalid Fill",
+                             "Fill should be a hex color like #dd6b42.");
+    return;
+  }
+
+  if (!applyNodePropertyEdits(scene_.selectedNodeId, newName, textValue, fillValue)) {
+    QMessageBox::warning(this, "Apply Failed",
+                         QString("tweaky could not update node %1.")
+                             .arg(scene_.selectedNodeId));
     return;
   }
 
@@ -342,7 +359,7 @@ void MainWindow::applyNodeRename() {
   if (auto* selectedItem = findTreeItemByNodeId(scene_.selectedNodeId)) {
     hierarchyTree_->setCurrentItem(selectedItem);
   }
-  statusBar()->showMessage(QString("Renamed node to %1").arg(newName), 4000);
+  statusBar()->showMessage(QString("Updated node %1").arg(newName), 4000);
 }
 
 void MainWindow::updateWindowTitle() {
@@ -378,14 +395,25 @@ bool MainWindow::exportSceneToPng(const QString& outputPath) {
   return true;
 }
 
-bool MainWindow::renameNode(const QString& nodeId, const QString& newName) {
+bool MainWindow::applyNodePropertyEdits(const QString& nodeId, const QString& newName,
+                                        const QString& textValue, const QString& fillValue) {
   if (scene_.sourcePath.isEmpty()) {
     return false;
   }
 
   QProcess process(this);
   process.setProgram(editorCliPath());
-  process.setArguments({scene_.sourcePath, "--rename-node", nodeId, newName});
+  QStringList arguments = {scene_.sourcePath, "--rename-node", nodeId, newName};
+
+  const auto selectedNode = nodeIndex_.value(nodeId);
+  if (selectedNode.params.contains("text")) {
+    arguments << "--set-text" << nodeId << textValue;
+  }
+  if (!fillValue.isEmpty() || selectedNode.style.contains("fill")) {
+    arguments << "--set-fill" << nodeId << fillValue;
+  }
+
+  process.setArguments(arguments);
   process.start();
 
   if (!process.waitForStarted(2000)) {
@@ -602,11 +630,11 @@ void MainWindow::handleTreeSelectionChanged() {
   scene_.selectedNodeId = id;
   updateInspector(node);
   canvas_->setSelectedNode(node);
-  nameEdit_->setText(node.name);
   statusBar()->showMessage(QString("Selected %1 [%2]").arg(node.name, node.type));
 }
 
 void MainWindow::updateInspector(const SceneNodeData& node) {
+  populateInspectorFields(node);
   QStringList sections;
   sections << QString("id: %1").arg(node.id);
   sections << QString("type: %1").arg(node.type);
@@ -618,6 +646,12 @@ void MainWindow::updateInspector(const SceneNodeData& node) {
   sections << "style:";
   sections << objectToPrettyJson(node.style);
   inspectorText_->setPlainText(sections.join("\n"));
+}
+
+void MainWindow::populateInspectorFields(const SceneNodeData& node) {
+  nameEdit_->setText(node.name);
+  textEdit_->setPlainText(node.params.value("text").toString());
+  fillEdit_->setText(node.style.value("fill").toString());
 }
 
 QString MainWindow::objectToPrettyJson(const QJsonObject& object) const {

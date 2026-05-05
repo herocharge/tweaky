@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use scene_schema::{PathPoint, SceneFile, SceneNode, Transform, ValidationIssue, validate_scene};
+use scene_schema::{
+    JsonObject, PathPoint, SceneFile, SceneNode, Transform, ValidationIssue, validate_scene,
+};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
@@ -192,6 +195,26 @@ impl RuntimeDocument {
                 node.transform = transform;
                 Ok(())
             }
+            DocumentCommand::SetNodeParamString {
+                node_id,
+                key,
+                value,
+            } => {
+                let node = find_node_mut(&mut self.scene.document.root, &node_id)
+                    .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
+                set_object_string(&mut node.params, &key, value);
+                Ok(())
+            }
+            DocumentCommand::SetNodeStyleString {
+                node_id,
+                key,
+                value,
+            } => {
+                let node = find_node_mut(&mut self.scene.document.root, &node_id)
+                    .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
+                set_object_string(&mut node.style, &key, value);
+                Ok(())
+            }
             DocumentCommand::InsertChild {
                 parent_id,
                 child,
@@ -248,6 +271,16 @@ pub enum DocumentCommand {
     SetNodeTransform {
         node_id: String,
         transform: Transform,
+    },
+    SetNodeParamString {
+        node_id: String,
+        key: String,
+        value: String,
+    },
+    SetNodeStyleString {
+        node_id: String,
+        key: String,
+        value: String,
     },
     InsertChild {
         parent_id: String,
@@ -598,6 +631,10 @@ fn transform_point(transform: &Transform, x: f64, y: f64) -> Point {
         x: transform.x + scaled_x * cos - scaled_y * sin,
         y: transform.y + scaled_x * sin + scaled_y * cos,
     }
+}
+
+fn set_object_string(object: &mut JsonObject, key: &str, value: String) {
+    object.insert(key.to_string(), Value::String(value));
 }
 
 fn hit_test_node(node: &SceneNode, point: Point, hits: &mut Vec<String>) {

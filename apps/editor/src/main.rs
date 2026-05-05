@@ -3,7 +3,7 @@ mod cli;
 mod qt_shell;
 
 use app::EditorApp;
-use cli::{CliOptions, RenameNodeOptions};
+use cli::{CliOptions, NodeStringEdit, RenameNodeOptions};
 
 fn main() {
     if let Err(message) = run() {
@@ -14,11 +14,26 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let options = CliOptions::parse(std::env::args())?;
+    let has_edits =
+        options.rename_node.is_some() || options.set_text.is_some() || options.set_fill.is_some();
     let mut app = EditorApp::open_path(&options.scene_path).map_err(|error| error.to_string())?;
 
-    if let Some(RenameNodeOptions { node_id, new_name }) = options.rename_node {
-        app.rename_node(&node_id, new_name)
+    if let Some(RenameNodeOptions { node_id, new_name }) = &options.rename_node {
+        app.rename_node(node_id, new_name.clone())
             .map_err(|error| error.to_string())?;
+    }
+
+    if let Some(NodeStringEdit { node_id, value }) = &options.set_text {
+        app.set_text_content(node_id, value.clone())
+            .map_err(|error| error.to_string())?;
+    }
+
+    if let Some(NodeStringEdit { node_id, value }) = &options.set_fill {
+        app.set_fill_color(node_id, value.clone())
+            .map_err(|error| error.to_string())?;
+    }
+
+    if has_edits {
         app.save_to_path(&options.scene_path)
             .map_err(|error| error.to_string())?;
     }
