@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use renderer::{RenderItem, RenderKind, RenderPlan};
-use scene_runtime::{ComponentRegistry, Point, Rect, RuntimeDocument};
+use scene_runtime::{ComponentRegistry, DocumentCommand, Point, Rect, RuntimeDocument};
 use scene_schema::{SceneFile, parse_scene_str};
 use serde::Serialize;
 
@@ -86,6 +86,36 @@ impl EditorApp {
         }
     }
 
+    pub fn rename_node(
+        &mut self,
+        node_id: &str,
+        new_name: impl Into<String>,
+    ) -> Result<(), EditorError> {
+        let new_name = new_name.into();
+        self.state
+            .runtime
+            .apply(DocumentCommand::RenameNode {
+                node_id: node_id.to_string(),
+                new_name,
+            })
+            .map_err(EditorError::CommandFailed)?;
+        self.refresh_derived_state();
+        self.state.selected_node_id = Some(node_id.to_string());
+        Ok(())
+    }
+
+    pub fn save_to_path(&self, output_path: impl AsRef<Path>) -> Result<(), EditorError> {
+        let output_path = output_path.as_ref();
+        let serialized = serde_json::to_string_pretty(self.state.runtime.scene())
+            .map_err(EditorError::SerializeFailed)?;
+        fs::write(output_path, format!("{serialized}\n")).map_err(|error| {
+            EditorError::WriteFailed {
+                path: output_path.to_path_buf(),
+                error,
+            }
+        })
+    }
+
     pub fn view_model(&self) -> EditorViewModel {
         let hierarchy_by_id = self
             .state
@@ -134,6 +164,21 @@ impl EditorApp {
             selected_node_id,
             nodes,
             render_items,
+        }
+    }
+
+    fn refresh_derived_state(&mut self) {
+        self.state.render_plan = renderer::build_render_plan(self.state.runtime.scene());
+        self.state.hierarchy = build_hierarchy(self.state.runtime.scene());
+
+        if let Some(selected_node_id) = &self.state.selected_node_id
+            && self.state.runtime.find_node(selected_node_id).is_none()
+        {
+            self.state.selected_node_id = self
+                .state
+                .hierarchy
+                .first()
+                .map(|entry| entry.node_id.clone());
         }
     }
 }
@@ -382,6 +427,12 @@ pub enum EditorError {
         error: serde_json::Error,
     },
     InvalidScene(Vec<scene_runtime::RuntimeIssue>),
+    CommandFailed(scene_runtime::CommandError),
+    SerializeFailed(serde_json::Error),
+    WriteFailed {
+        path: PathBuf,
+        error: std::io::Error,
+    },
     #[cfg(not(feature = "skia-safe-backend"))]
     ExportUnavailable,
     ExportFailed(renderer::skia_backend::SkiaRenderError),
@@ -398,6 +449,11 @@ impl fmt::Display for EditorError {
             }
             Self::InvalidScene(issues) => {
                 write!(f, "scene validation failed with {} issue(s)", issues.len())
+            }
+            Self::CommandFailed(error) => write!(f, "scene edit failed: {error:?}"),
+            Self::SerializeFailed(error) => write!(f, "failed to serialize scene: {error}"),
+            Self::WriteFailed { path, error } => {
+                write!(f, "failed to write scene at {}: {error}", path.display())
             }
             #[cfg(not(feature = "skia-safe-backend"))]
             Self::ExportUnavailable => {
@@ -493,5 +549,26 @@ mod tests {
         assert_eq!(view_model.document_name, "Basic Poster");
         assert_eq!(view_model.nodes.len(), 3);
         assert_eq!(view_model.selected_node_id.as_deref(), Some("root"));
+    }
+
+    #[test]
+    fn rename_node_updates_summary_and_view_model() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
+        let mut app = EditorApp::from_scene(PathBuf::from("basic_poster.vsd.json"), scene)
+            .expect("editor app should initialize");
+
+        app.rename_node("headline", "Title Block")
+            .expect("rename should succeed");
+
+        let renamed = app
+            .state
+            .runtime
+            .find_node("headline")
+            .expect("headline should exist");
+        assert_eq!(renamed.name, "Title Block");
+        assert_eq!(
+            app.view_model().selected_node_id.as_deref(),
+            Some("headline")
+        );
     }
 }

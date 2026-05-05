@@ -103,6 +103,7 @@ Currently implemented:
 - `editor` now has a real app-state scaffold, CLI loading path, hierarchy summary, and PNG export workflow
 - `editor` now emits a serialized view-model for the Qt shell, including hierarchy, node bounds, and render item data
 - `apps/editor/qt_shell` now provides a compiled Qt Widgets shell prototype with hierarchy, inspector, a Rust-fed canvas preview, and working menu actions for open, reload, and export PNG
+- the first write path now exists: selected-node rename flows from the Qt inspector into the Rust editor app, writes the scene back to disk, and reloads the updated view model
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
@@ -113,7 +114,7 @@ Currently implemented:
 
 Expected next implementation step:
 
-- Introduce editor-side mutation flows so the hierarchy, inspector, and canvas can stop being read-only
+- Expand editor-side mutation flows beyond rename so the hierarchy, inspector, and canvas can stop being mostly read-only
 - Add save/save-as behavior through the Rust app layer
 - Preserve the Rust-owned view-model boundary as the source of truth for UI data
 - Keep renderer/runtime boundaries stable while the desktop shell becomes interactive
@@ -204,7 +205,7 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Introduce selection and property editing commands across the Rust editor app boundary
+1. Add more property editing commands across the Rust editor app boundary
 2. Add save/save-as actions that flow through the Rust app layer
 3. Expand the canvas from preview-only rendering toward interactive selection/manipulation
 4. Preserve the current CLI/editor app workflow as a smoke-test path

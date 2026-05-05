@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QHeaderView>
+#include <QFormLayout>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -188,12 +189,27 @@ void MainWindow::buildUi() {
   hierarchyDock->setWidget(hierarchyTree_);
   addDockWidget(Qt::LeftDockWidgetArea, hierarchyDock);
 
+  auto* inspectorPanel = new QWidget(this);
+  auto* inspectorLayout = new QVBoxLayout(inspectorPanel);
+  auto* renameForm = new QFormLayout();
+  nameEdit_ = new QLineEdit(inspectorPanel);
+  nameEdit_->setPlaceholderText("Selected node name");
+  renameForm->addRow("Name", nameEdit_);
+  inspectorLayout->addLayout(renameForm);
+
+  applyNameButton_ = new QPushButton("Apply Rename", inspectorPanel);
+  inspectorLayout->addWidget(applyNameButton_);
+  connect(applyNameButton_, &QPushButton::clicked, this, &MainWindow::applyNodeRename);
+  connect(nameEdit_, &QLineEdit::returnPressed, this, &MainWindow::applyNodeRename);
+
   inspectorText_ = new QTextEdit(this);
   inspectorText_->setReadOnly(true);
   inspectorText_->setPlaceholderText("Select a node to inspect its params and style.");
+  inspectorLayout->addWidget(inspectorText_, 1);
+  inspectorPanel->setLayout(inspectorLayout);
 
   auto* inspectorDock = new QDockWidget("Inspector", this);
-  inspectorDock->setWidget(inspectorText_);
+  inspectorDock->setWidget(inspectorPanel);
   addDockWidget(Qt::RightDockWidgetArea, inspectorDock);
 
   statusBar()->showMessage("Ready");
@@ -297,6 +313,38 @@ void MainWindow::exportPngDialog() {
   }
 }
 
+void MainWindow::applyNodeRename() {
+  if (scene_.selectedNodeId.isEmpty()) {
+    QMessageBox::information(this, "Nothing Selected",
+                             "Select a node before applying a rename.");
+    return;
+  }
+
+  const QString newName = nameEdit_->text().trimmed();
+  if (newName.isEmpty()) {
+    QMessageBox::information(this, "Empty Name", "Node names cannot be empty.");
+    return;
+  }
+
+  if (!renameNode(scene_.selectedNodeId, newName)) {
+    QMessageBox::warning(this, "Rename Failed",
+                         QString("tweaky could not rename node %1.").arg(scene_.selectedNodeId));
+    return;
+  }
+
+  if (!loadScene(scene_.sourcePath)) {
+    QMessageBox::warning(this, "Reload Failed",
+                         QString("tweaky renamed the node but failed to reload:\n%1")
+                             .arg(scene_.sourcePath));
+    return;
+  }
+
+  if (auto* selectedItem = findTreeItemByNodeId(scene_.selectedNodeId)) {
+    hierarchyTree_->setCurrentItem(selectedItem);
+  }
+  statusBar()->showMessage(QString("Renamed node to %1").arg(newName), 4000);
+}
+
 void MainWindow::updateWindowTitle() {
   const auto sourceName =
       scene_.sourcePath.isEmpty() ? QString("untitled") : QFileInfo(scene_.sourcePath).fileName();
@@ -327,6 +375,32 @@ bool MainWindow::exportSceneToPng(const QString& outputPath) {
   }
 
   statusBar()->showMessage(QString("Exported PNG to %1").arg(outputPath), 4000);
+  return true;
+}
+
+bool MainWindow::renameNode(const QString& nodeId, const QString& newName) {
+  if (scene_.sourcePath.isEmpty()) {
+    return false;
+  }
+
+  QProcess process(this);
+  process.setProgram(editorCliPath());
+  process.setArguments({scene_.sourcePath, "--rename-node", nodeId, newName});
+  process.start();
+
+  if (!process.waitForStarted(2000)) {
+    return false;
+  }
+
+  if (!process.waitForFinished(15000) || process.exitStatus() != QProcess::NormalExit ||
+      process.exitCode() != 0) {
+    const QString stderrText = QString::fromUtf8(process.readAllStandardError()).trimmed();
+    if (!stderrText.isEmpty()) {
+      inspectorText_->setPlainText(stderrText);
+    }
+    return false;
+  }
+
   return true;
 }
 
@@ -528,6 +602,7 @@ void MainWindow::handleTreeSelectionChanged() {
   scene_.selectedNodeId = id;
   updateInspector(node);
   canvas_->setSelectedNode(node);
+  nameEdit_->setText(node.name);
   statusBar()->showMessage(QString("Selected %1 [%2]").arg(node.name, node.type));
 }
 

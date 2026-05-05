@@ -6,6 +6,8 @@
 #include <QMainWindow>
 #include <QMap>
 #include <QRectF>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QTreeWidget>
 #include <QTextEdit>
 #include <QWidget>
@@ -103,6 +105,7 @@ private slots:
   void openSceneDialog();
   void reloadScene();
   void exportPngDialog();
+  void applyNodeRename();
   void handleTreeSelectionChanged();
 
 private:
@@ -114,6 +117,7 @@ private:
   void updateInspector(const SceneNodeData& node);
   void updateWindowTitle();
   bool exportSceneToPng(const QString& outputPath);
+  bool renameNode(const QString& nodeId, const QString& newName);
   bool loadSceneFromEditorCli(const QString& scenePath);
   bool loadSceneFromRawJson(const QString& scenePath);
   QTreeWidgetItem* findTreeItemByNodeId(const QString& nodeId) const;
@@ -123,6 +127,8 @@ private:
   SceneDocumentData scene_;
   QMap<QString, SceneNodeData> nodeIndex_;
   QTreeWidget* hierarchyTree_ = nullptr;
+  QLineEdit* nameEdit_ = nullptr;
+  QPushButton* applyNameButton_ = nullptr;
   QTextEdit* inspectorText_ = nullptr;
   CanvasWidget* canvas_ = nullptr;
 };

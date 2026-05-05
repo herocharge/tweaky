@@ -3,7 +3,7 @@ mod cli;
 mod qt_shell;
 
 use app::EditorApp;
-use cli::CliOptions;
+use cli::{CliOptions, RenameNodeOptions};
 
 fn main() {
     if let Err(message) = run() {
@@ -14,7 +14,14 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let options = CliOptions::parse(std::env::args())?;
-    let app = EditorApp::open_path(&options.scene_path).map_err(|error| error.to_string())?;
+    let mut app = EditorApp::open_path(&options.scene_path).map_err(|error| error.to_string())?;
+
+    if let Some(RenameNodeOptions { node_id, new_name }) = options.rename_node {
+        app.rename_node(&node_id, new_name)
+            .map_err(|error| error.to_string())?;
+        app.save_to_path(&options.scene_path)
+            .map_err(|error| error.to_string())?;
+    }
 
     if options.dump_view_model {
         let json = serde_json::to_string_pretty(&app.view_model())
