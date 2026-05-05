@@ -2,6 +2,52 @@ use std::collections::HashMap;
 
 use scene_schema::{SceneFile, SceneNode, Transform, ValidationIssue, validate_scene};
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Rect {
+    pub fn from_origin_size(origin: Point, width: f64, height: f64) -> Self {
+        Self {
+            x: origin.x,
+            y: origin.y,
+            width,
+            height,
+        }
+    }
+
+    pub fn contains(self, point: Point) -> bool {
+        point.x >= self.x
+            && point.x <= self.x + self.width
+            && point.y >= self.y
+            && point.y <= self.y + self.height
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        let min_x = self.x.min(other.x);
+        let min_y = self.y.min(other.y);
+        let max_x = (self.x + self.width).max(other.x + other.width);
+        let max_y = (self.y + self.height).max(other.y + other.height);
+
+        Self {
+            x: min_x,
+            y: min_y,
+            width: max_x - min_x,
+            height: max_y - min_y,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentDefinition {
     pub display_name: &'static str,
@@ -176,6 +222,17 @@ impl RuntimeDocument {
             }
         }
     }
+
+    pub fn node_bounds(&self, node_id: &str) -> Option<Rect> {
+        let node = self.find_node(node_id)?;
+        bounds_for_node(node)
+    }
+
+    pub fn hit_test(&self, point: Point) -> Vec<String> {
+        let mut hits = Vec::new();
+        hit_test_node(&self.scene.document.root, point, &mut hits);
+        hits
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -308,6 +365,50 @@ pub fn visit_depth_first<'a>(
     }
 }
 
+pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
+    match node.node_type {
+        scene_schema::NodeType::Group => {
+            let mut iter = node.children.iter().filter_map(bounds_for_node);
+            let first = iter.next()?;
+            Some(iter.fold(first, Rect::union))
+        }
+        scene_schema::NodeType::Rectangle => {
+            let params = node.rectangle_params()?;
+            Some(transformed_rect(
+                &node.transform,
+                params.width,
+                params.height,
+            ))
+        }
+        scene_schema::NodeType::Ellipse => {
+            let params = node.ellipse_params()?;
+            Some(transformed_rect(
+                &node.transform,
+                params.radius_x * 2.0,
+                params.radius_y * 2.0,
+            ))
+        }
+        scene_schema::NodeType::Path => None,
+        scene_schema::NodeType::Text => {
+            let params = node.text_params()?;
+            Some(estimate_text_bounds(
+                &node.transform,
+                &params.text,
+                params.font_size,
+            ))
+        }
+        scene_schema::NodeType::ImageLayer => {
+            let params = node.image_layer_params()?;
+            Some(transformed_rect(
+                &node.transform,
+                params.display_width,
+                params.display_height,
+            ))
+        }
+        scene_schema::NodeType::Shadow | scene_schema::NodeType::Blur => None,
+    }
+}
+
 fn remove_node(node: &mut SceneNode, target_id: &str) -> Option<SceneNode> {
     if let Some(index) = node.children.iter().position(|child| child.id == target_id) {
         return Some(node.children.remove(index));
@@ -345,13 +446,80 @@ fn validate_insert_child(
     Ok(())
 }
 
+fn transformed_rect(transform: &Transform, width: f64, height: f64) -> Rect {
+    let scaled_width = width * transform.scale_x.abs();
+    let scaled_height = height * transform.scale_y.abs();
+
+    if transform.rotation == 0.0 {
+        return Rect::from_origin_size(
+            Point {
+                x: transform.x,
+                y: transform.y,
+            },
+            scaled_width,
+            scaled_height,
+        );
+    }
+
+    let radians = transform.rotation.to_radians();
+    let cos = radians.cos().abs();
+    let sin = radians.sin().abs();
+    let rotated_width = scaled_width * cos + scaled_height * sin;
+    let rotated_height = scaled_width * sin + scaled_height * cos;
+
+    Rect::from_origin_size(
+        Point {
+            x: transform.x,
+            y: transform.y,
+        },
+        rotated_width,
+        rotated_height,
+    )
+}
+
+fn estimate_text_bounds(transform: &Transform, text: &str, font_size: f64) -> Rect {
+    let lines = text.lines().collect::<Vec<_>>();
+    let max_line_chars = lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0) as f64;
+    let width = max_line_chars * font_size * 0.6 * transform.scale_x.abs();
+    let height = lines.len() as f64 * font_size * 1.2 * transform.scale_y.abs();
+
+    Rect::from_origin_size(
+        Point {
+            x: transform.x,
+            y: transform.y,
+        },
+        width,
+        height,
+    )
+}
+
+fn hit_test_node(node: &SceneNode, point: Point, hits: &mut Vec<String>) {
+    if !node.visible {
+        return;
+    }
+
+    for child in node.children.iter().rev() {
+        hit_test_node(child, point, hits);
+    }
+
+    if let Some(bounds) = bounds_for_node(node) {
+        if bounds.contains(point) {
+            hits.push(node.id.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use scene_schema::{NodeType, Transform, parse_scene_str};
 
     use super::{
-        ComponentRegistry, DocumentCommand, RuntimeDocument, find_node,
-        validate_registry_compatibility,
+        ComponentRegistry, DocumentCommand, Point, Rect, RuntimeDocument, bounds_for_node,
+        find_node, validate_registry_compatibility,
     };
 
     const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
@@ -490,5 +658,65 @@ mod tests {
             .expect("remove should succeed");
 
         assert!(runtime.find_node("bg_rect").is_none());
+    }
+
+    #[test]
+    fn computes_bounds_for_rectangle_and_group() {
+        let runtime = make_runtime();
+
+        let rect_bounds = runtime
+            .node_bounds("bg_rect")
+            .expect("rectangle bounds should exist");
+        assert_eq!(
+            rect_bounds,
+            Rect {
+                x: 120.0,
+                y: 100.0,
+                width: 1360.0,
+                height: 700.0,
+            }
+        );
+
+        let group_bounds = runtime
+            .node_bounds("root")
+            .expect("group bounds should exist");
+        assert!(group_bounds.width >= rect_bounds.width);
+        assert!(group_bounds.height >= rect_bounds.height);
+    }
+
+    #[test]
+    fn hit_test_returns_topmost_child_first() {
+        let runtime = make_runtime();
+        let hits = runtime.hit_test(Point { x: 250.0, y: 250.0 });
+
+        assert_eq!(hits.first().map(String::as_str), Some("headline"));
+        assert!(hits.iter().any(|id| id == "bg_rect"));
+        assert!(hits.iter().any(|id| id == "root"));
+    }
+
+    #[test]
+    fn bounds_helper_returns_none_for_path_without_geometry() {
+        let path_node = scene_schema::SceneNode {
+            id: "path".to_string(),
+            node_type: NodeType::Path,
+            name: "Path".to_string(),
+            visible: true,
+            locked: false,
+            blend_mode: scene_schema::BlendMode::Normal,
+            transform: Transform {
+                x: 0.0,
+                y: 0.0,
+                scale_x: 1.0,
+                scale_y: 1.0,
+                rotation: 0.0,
+                opacity: 1.0,
+            },
+            params: Default::default(),
+            style: Default::default(),
+            children: Vec::new(),
+            meta: Default::default(),
+        };
+
+        assert!(bounds_for_node(&path_node).is_none());
     }
 }

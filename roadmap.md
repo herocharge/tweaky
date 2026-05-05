@@ -17,6 +17,28 @@ The goal of this roadmap is to make implementation order explicit, reduce thrash
 - Optimize for interactive editing speed before visual complexity.
 - Treat AI integration as a consumer of the scene schema, not a separate product.
 - Keep commits small and meaningful.
+- Prefer extension points around the scene IR, not arbitrary code embedded inside documents.
+
+## Architectural Direction
+
+The project should evolve as:
+
+- A stable scene/document IR
+- A built-in component library
+- Pluggable renderer backends
+- Optional external generators and adapters
+
+Examples of acceptable extension directions:
+
+- Alternate rendering backends
+- JS or p5-style tools that emit standard scene nodes
+- Import/export adapters
+- AI agents that patch the same declarative scene model
+
+Examples to avoid in MVP:
+
+- Saved documents whose meaning depends on arbitrary embedded scripting
+- Backend-specific document semantics that break portability
 
 ## Milestone 0: Project Bootstrap
 
@@ -196,6 +218,7 @@ Detailed tasks:
 - Hit testing
 - Selection outlines
 - Transform handles contract for editor integration
+- Shared geometry primitives that the editor can trust without depending on Skia internals
 
 6. Incremental rendering
 
@@ -503,3 +526,5 @@ Current leaning:
 
 - Keep the document wire format generic for MVP
 - Add typed Rust accessors for the most important node families instead of fully reworking serialized params immediately
+- Treat the built-in node vocabulary as a standard library, and let external tools generate that IR instead of embedding opaque routines in documents
+- Put shared geometry and hit-testing semantics in core/runtime land rather than tying editor behavior to Skia-specific APIs

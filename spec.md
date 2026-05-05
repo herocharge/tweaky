@@ -28,6 +28,54 @@ It has five core parts:
 
 The native format is the source of truth. Raster exports are outputs, not the main artifact.
 
+## Extensibility Model
+
+The system should be extensible, but the extensibility boundary matters.
+
+The right default architecture is:
+
+1. Stable scene IR and document format
+2. Built-in component library
+3. Pluggable renderer backends
+4. Optional generator and adapter layers
+
+That means:
+
+- The saved document stays declarative
+- The core runtime owns traversal, validation, and editing semantics
+- Built-in components such as `Rectangle`, `Ellipse`, `Text`, and `ImageLayer` form a standard library
+- Different backends can render the same scene IR through different technologies such as Skia, SVG, HTML canvas, or other targets
+- External tools can generate standard scene documents without becoming part of the document format itself
+
+### What this allows
+
+- A Skia renderer for the main desktop product
+- Future alternate renderers that target other platforms
+- Tooling that emits scene nodes from JavaScript or p5-style routines
+- AI adapters that generate or patch the same document model
+
+### What this should avoid
+
+The native document should not embed arbitrary backend-specific drawing code in MVP.
+
+For example, avoid a model where a saved scene node contains raw JavaScript or p5 drawing logic as its primary meaning. That would weaken:
+
+- Validation
+- Determinism
+- Security
+- Cross-backend portability
+- AI generation reliability
+
+### Preferred compromise
+
+If users want custom drawing or generation logic, they should be able to:
+
+- Generate standard scene subtrees from external code
+- Implement alternate renderer backends against a stable render interface
+- Extend tooling around the document model without making the document itself opaque
+
+So the extension point should usually live around the document, not inside the document.
+
 ## Product Principles
 
 1. Visual-first UX
@@ -264,6 +312,25 @@ For MVP, style can remain simple:
 - Blur
 
 Longer term, some style may move into dedicated effect nodes when composition demands it.
+
+## Platform Decomposition
+
+The intended module split is:
+
+- `scene_schema`: document IR and serialization
+- `scene_runtime`: traversal, validation, commands, geometry, and component registry
+- `renderer`: backend-agnostic render planning plus concrete backends
+- `editor`: desktop shell and interaction surfaces
+- `ai_adapter`: schema-aware generation and edit orchestration
+
+The built-in component set should behave like a standard library for visual scenes.
+
+That gives the project two useful forms of extensibility:
+
+- New renderer backends
+- New generators and tooling that target the same IR
+
+It also keeps the product coherent: one document model, multiple ways to produce or render it.
 
 ## Raster Fallback Node
 

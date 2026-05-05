@@ -65,6 +65,12 @@ These are current project decisions and should be treated as default assumptions
 - Rust code is starting to use typed parameter accessors on top of that generic structure
 - Current typed accessors exist for rectangle, ellipse, text, and image-layer nodes
 
+### Extensibility model
+
+- The saved document should stay declarative
+- Built-in node types act as a standard component library
+- Alternate renderers and external generators should target the scene IR rather than embed arbitrary runtime code in documents
+
 ## Key Docs
 
 - [README.md](/Users/herocharge/fun/draw/README.md)
@@ -88,7 +94,7 @@ Currently implemented:
 
 - Root Cargo workspace
 - `scene_schema` crate with parsing and validation
-- `scene_runtime` crate with component registry, depth-first traversal, and command-based mutation
+- `scene_runtime` crate with component registry, depth-first traversal, command-based mutation, bounds calculation, and hit testing
 - `renderer` crate with render plan generation, primitive extraction, rough bounds estimation, and optional Skia CPU PNG export
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
@@ -101,7 +107,7 @@ Currently implemented:
 Expected next implementation step:
 
 - Expand Skia rendering coverage beyond the current rectangle/ellipse/text baseline
-- Add shared geometry/bounds contracts wherever the editor will need them directly
+- Decide whether renderer should adopt `scene_runtime` geometry contracts more directly or keep a translation boundary
 - Decide whether more node families need typed accessors before renderer integration deepens
 
 ## Intended Repo Shape
@@ -190,7 +196,7 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 The next likely sequence is:
 
 1. Expand Skia rendering coverage on top of the current CPU export path
-2. Add scene graph geometry/bounds abstractions that renderer and editor can share more explicitly
+2. Decide how renderer and runtime should share geometry contracts without coupling the layers badly
 3. Start export-oriented render interfaces around file output instead of just byte buffers
 4. Decide whether more node families need typed accessors before editor work expands
 5. Commit and push each slice separately
