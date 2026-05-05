@@ -91,18 +91,30 @@ public:
 
 signals:
   void nodePicked(const QString& nodeId);
+  void nodeDragPreview(double x, double y);
+  void nodeDragCommitted(const QString& nodeId, double x, double y);
 
 protected:
   void paintEvent(QPaintEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
+  void mouseMoveEvent(QMouseEvent* event) override;
+  void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
   QRectF canvasRectForWidget() const;
   QPointF mapScenePoint(const ScenePointData& point, const QRectF& canvasRect) const;
   QRectF mapSceneRect(const SceneRectData& rect, const QRectF& canvasRect) const;
+  QPointF activeDragWidgetOffset() const;
+  QPointF scenePositionForWidgetPoint(const QPointF& widgetPoint) const;
   QString pickNodeAt(const QPointF& widgetPoint) const;
   SceneDocumentData scene_;
   SceneNodeData selectedNode_;
+  bool dragActive_ = false;
+  QString dragNodeId_;
+  QPointF dragStartWidgetPos_;
+  QPointF dragCurrentWidgetPos_;
+  double dragStartSceneX_ = 0.0;
+  double dragStartSceneY_ = 0.0;
 };
 
 class MainWindow : public QMainWindow {
@@ -118,6 +130,8 @@ private slots:
   void applyNodeEdits();
   void scheduleAutoApply();
   void handleCanvasNodePicked(const QString& nodeId);
+  void handleCanvasNodeDragPreview(double x, double y);
+  void handleCanvasNodeDragCommitted(const QString& nodeId, double x, double y);
   void handleTreeSelectionChanged();
 
 private:

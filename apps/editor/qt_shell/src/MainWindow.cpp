@@ -76,9 +76,17 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
 
   painter.drawText(QRectF(56.0, 108.0, canvasRect.width() - 64.0, 72.0), summary);
 
+  const QPointF dragOffset = activeDragWidgetOffset();
+
   for (const auto& item : scene_.renderItems) {
     const QColor fill = item.fill.isValid() ? item.fill : QColor("#c8bfb1");
     painter.setOpacity(item.opacity);
+    const bool dragSelectedItem = dragActive_ && item.nodeId == dragNodeId_;
+
+    if (dragSelectedItem) {
+      painter.save();
+      painter.translate(dragOffset);
+    }
 
     auto shadowOffsetForItem = [&](const SceneCanvasItemData& shadowItem) -> QPointF {
       if (!shadowItem.hasShadow) {
@@ -237,10 +245,17 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
                        Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
                        item.imageRef.isEmpty() ? QString("ImageLayer") : item.imageRef);
     }
+
+    if (dragSelectedItem) {
+      painter.restore();
+    }
   }
 
   if (selectedNode_.hasBounds) {
-    const QRectF selectedRect = mapSceneRect(selectedNode_.bounds, canvasRect);
+    QRectF selectedRect = mapSceneRect(selectedNode_.bounds, canvasRect);
+    if (dragActive_ && selectedNode_.id == dragNodeId_) {
+      selectedRect.translate(dragOffset);
+    }
     const QRectF outlineRect = selectedRect.adjusted(-6.0, -6.0, 6.0, 6.0);
     painter.setOpacity(1.0);
     painter.setPen(QPen(QColor("#d55a2a"), 1.75));
@@ -304,17 +319,82 @@ QRectF CanvasWidget::mapSceneRect(const SceneRectData& rect, const QRectF& canva
                 rect.width * scaleX, rect.height * scaleY);
 }
 
+QPointF CanvasWidget::activeDragWidgetOffset() const {
+  if (!dragActive_) {
+    return QPointF(0.0, 0.0);
+  }
+
+  return dragCurrentWidgetPos_ - dragStartWidgetPos_;
+}
+
+QPointF CanvasWidget::scenePositionForWidgetPoint(const QPointF& widgetPoint) const {
+  const QRectF canvasRect = canvasRectForWidget();
+  if (scene_.width <= 0.0 || scene_.height <= 0.0) {
+    return QPointF(0.0, 0.0);
+  }
+
+  const double scaleX = canvasRect.width() / scene_.width;
+  const double scaleY = canvasRect.height() / scene_.height;
+  return QPointF((widgetPoint.x() - canvasRect.x()) / scaleX, (widgetPoint.y() - canvasRect.y()) / scaleY);
+}
+
 void CanvasWidget::mousePressEvent(QMouseEvent* event) {
   if (event->button() == Qt::LeftButton) {
     const auto nodeId = pickNodeAt(event->position());
     if (!nodeId.isEmpty()) {
-      emit nodePicked(nodeId);
+      if (nodeId == selectedNode_.id) {
+        dragActive_ = true;
+        dragNodeId_ = nodeId;
+        dragStartWidgetPos_ = event->position();
+        dragCurrentWidgetPos_ = event->position();
+        dragStartSceneX_ = selectedNode_.positionX;
+        dragStartSceneY_ = selectedNode_.positionY;
+      } else {
+        emit nodePicked(nodeId);
+      }
+
+      update();
       event->accept();
       return;
     }
   }
 
   QWidget::mousePressEvent(event);
+}
+
+void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
+  if (dragActive_) {
+    dragCurrentWidgetPos_ = event->position();
+    const QPointF sceneStart = scenePositionForWidgetPoint(dragStartWidgetPos_);
+    const QPointF sceneCurrent = scenePositionForWidgetPoint(dragCurrentWidgetPos_);
+    emit nodeDragPreview(
+        dragStartSceneX_ + (sceneCurrent.x() - sceneStart.x()),
+        dragStartSceneY_ + (sceneCurrent.y() - sceneStart.y()));
+    update();
+    event->accept();
+    return;
+  }
+
+  QWidget::mouseMoveEvent(event);
+}
+
+void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
+  if (dragActive_ && event->button() == Qt::LeftButton) {
+    dragCurrentWidgetPos_ = event->position();
+    const QPointF sceneStart = scenePositionForWidgetPoint(dragStartWidgetPos_);
+    const QPointF sceneCurrent = scenePositionForWidgetPoint(dragCurrentWidgetPos_);
+    emit nodeDragCommitted(
+        dragNodeId_,
+        dragStartSceneX_ + (sceneCurrent.x() - sceneStart.x()),
+        dragStartSceneY_ + (sceneCurrent.y() - sceneStart.y()));
+    dragActive_ = false;
+    dragNodeId_.clear();
+    update();
+    event->accept();
+    return;
+  }
+
+  QWidget::mouseReleaseEvent(event);
 }
 
 QString CanvasWidget::pickNodeAt(const QPointF& widgetPoint) const {
@@ -345,6 +425,9 @@ void MainWindow::buildUi() {
   canvas_ = new CanvasWidget(this);
   setCentralWidget(canvas_);
   connect(canvas_, &CanvasWidget::nodePicked, this, &MainWindow::handleCanvasNodePicked);
+  connect(canvas_, &CanvasWidget::nodeDragPreview, this, &MainWindow::handleCanvasNodeDragPreview);
+  connect(canvas_, &CanvasWidget::nodeDragCommitted, this,
+          &MainWindow::handleCanvasNodeDragCommitted);
 
   hierarchyTree_ = new QTreeWidget(this);
   hierarchyTree_->setHeaderLabels({"Node", "Type"});
@@ -801,6 +884,25 @@ void MainWindow::handleCanvasNodePicked(const QString& nodeId) {
   if (auto* selectedItem = findTreeItemByNodeId(nodeId)) {
     hierarchyTree_->setCurrentItem(selectedItem);
   }
+}
+
+void MainWindow::handleCanvasNodeDragPreview(double x, double y) {
+  suppressInspectorSignals_ = true;
+  xSpin_->setValue(x);
+  ySpin_->setValue(y);
+  suppressInspectorSignals_ = false;
+}
+
+void MainWindow::handleCanvasNodeDragCommitted(const QString& nodeId, double x, double y) {
+  if (nodeId != scene_.selectedNodeId) {
+    return;
+  }
+
+  suppressInspectorSignals_ = true;
+  xSpin_->setValue(x);
+  ySpin_->setValue(y);
+  suppressInspectorSignals_ = false;
+  applyNodeEdits();
 }
 
 void MainWindow::updateInspector(const SceneNodeData& node) {
