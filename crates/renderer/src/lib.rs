@@ -1,32 +1,9 @@
-use scene_schema::{SceneFile, SceneNode, Transform};
+use scene_runtime::bounds_for_node;
+pub use scene_runtime::{Point, Rect};
+use scene_schema::{SceneFile, SceneNode};
 
 #[cfg(feature = "skia-safe-backend")]
 pub mod skia_backend;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Point {
-    pub x: f64,
-    pub y: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-impl Rect {
-    pub fn from_origin_size(origin: Point, width: f64, height: f64) -> Self {
-        Self {
-            x: origin.x,
-            y: origin.y,
-            width,
-            height,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderPlan {
@@ -147,13 +124,7 @@ fn node_to_render_item(node: &SceneNode) -> Option<RenderItem> {
         scene_schema::NodeType::ImageLayer => RenderKind::ImageLayer(image_layer_primitive(node)?),
     };
 
-    let bounds = match &kind {
-        RenderKind::Rectangle(primitive) => Some(primitive.bounds),
-        RenderKind::Ellipse(primitive) => Some(primitive.bounds),
-        RenderKind::Path(primitive) => primitive.bounds,
-        RenderKind::Text(primitive) => Some(estimate_text_bounds(primitive, &node.transform)),
-        RenderKind::ImageLayer(primitive) => Some(primitive.bounds),
-    };
+    let bounds = bounds_for_node(node);
 
     Some(RenderItem {
         node_id: node.id.clone(),
@@ -166,7 +137,7 @@ fn node_to_render_item(node: &SceneNode) -> Option<RenderItem> {
 
 fn rectangle_primitive(node: &SceneNode) -> Option<RectanglePrimitive> {
     let params = node.rectangle_params()?;
-    let bounds = transformed_rect(&node.transform, params.width, params.height);
+    let bounds = bounds_for_node(node)?;
 
     Some(RectanglePrimitive {
         bounds,
@@ -176,12 +147,7 @@ fn rectangle_primitive(node: &SceneNode) -> Option<RectanglePrimitive> {
 }
 
 fn ellipse_primitive(node: &SceneNode) -> Option<EllipsePrimitive> {
-    let params = node.ellipse_params()?;
-    let bounds = transformed_rect(
-        &node.transform,
-        params.radius_x * 2.0,
-        params.radius_y * 2.0,
-    );
+    let bounds = bounds_for_node(node)?;
 
     Some(EllipsePrimitive {
         bounds,
@@ -215,57 +181,14 @@ fn image_layer_primitive(node: &SceneNode) -> Option<ImageLayerPrimitive> {
     let params = node.image_layer_params()?;
 
     Some(ImageLayerPrimitive {
-        bounds: transformed_rect(&node.transform, params.display_width, params.display_height),
+        bounds: bounds_for_node(node)?,
         image_ref: Some(params.image_ref),
     })
 }
 
-fn transformed_rect(transform: &Transform, width: f64, height: f64) -> Rect {
-    let scaled_width = width * transform.scale_x.abs();
-    let scaled_height = height * transform.scale_y.abs();
-
-    if transform.rotation == 0.0 {
-        return Rect::from_origin_size(
-            Point {
-                x: transform.x,
-                y: transform.y,
-            },
-            scaled_width,
-            scaled_height,
-        );
-    }
-
-    let radians = transform.rotation.to_radians();
-    let cos = radians.cos().abs();
-    let sin = radians.sin().abs();
-    let rotated_width = scaled_width * cos + scaled_height * sin;
-    let rotated_height = scaled_width * sin + scaled_height * cos;
-
-    Rect::from_origin_size(
-        Point {
-            x: transform.x,
-            y: transform.y,
-        },
-        rotated_width,
-        rotated_height,
-    )
-}
-
-fn estimate_text_bounds(primitive: &TextPrimitive, transform: &Transform) -> Rect {
-    let lines = primitive.text.lines().collect::<Vec<_>>();
-    let max_line_chars = lines
-        .iter()
-        .map(|line| line.chars().count())
-        .max()
-        .unwrap_or(0) as f64;
-    let width = max_line_chars * primitive.font_size * 0.6 * transform.scale_x.abs();
-    let height = lines.len() as f64 * primitive.font_size * 1.2 * transform.scale_y.abs();
-
-    Rect::from_origin_size(primitive.origin, width, height)
-}
-
 #[cfg(test)]
 mod tests {
+    use scene_runtime::bounds_for_node;
     use scene_schema::parse_scene_str;
 
     use super::{RenderBackend, RenderItem, build_render_plan, render_with_backend};
@@ -302,6 +225,17 @@ mod tests {
 
         assert_eq!(backend.backgrounds, vec!["#f5f1e8".to_string()]);
         assert_eq!(backend.items.len(), 2);
+    }
+
+    #[test]
+    fn render_plan_uses_runtime_bounds() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
+        let runtime_bounds =
+            bounds_for_node(&scene.document.root.children[0]).expect("runtime bounds should exist");
+        let plan = build_render_plan(&scene);
+        let item_bounds = plan.items[0].bounds.expect("item bounds should exist");
+
+        assert_eq!(item_bounds, runtime_bounds);
     }
 
     #[derive(Default)]

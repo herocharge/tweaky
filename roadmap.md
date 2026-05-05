@@ -528,3 +528,4 @@ Current leaning:
 - Add typed Rust accessors for the most important node families instead of fully reworking serialized params immediately
 - Treat the built-in node vocabulary as a standard library, and let external tools generate that IR instead of embedding opaque routines in documents
 - Put shared geometry and hit-testing semantics in core/runtime land rather than tying editor behavior to Skia-specific APIs
+- Let renderer consume runtime geometry semantics where practical instead of duplicating bounds math

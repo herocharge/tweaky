@@ -15,7 +15,7 @@ Current implementation artifacts:
 - [examples](./examples): hand-authored example `.vsd.json` scene documents
 - [crates/scene_schema](./crates/scene_schema): Rust parsing and validation crate
 - [crates/scene_runtime](./crates/scene_runtime): runtime registry, traversal, mutation commands, and shared geometry/bounds helpers
-- [crates/renderer](./crates/renderer): backend-agnostic render plan, bounds layer, and optional Skia CPU raster backend
+- [crates/renderer](./crates/renderer): backend-agnostic render plan and optional Skia CPU raster backend, now consuming runtime geometry semantics
 - [Cargo.toml](./Cargo.toml): workspace root
 
 Useful renderer commands:

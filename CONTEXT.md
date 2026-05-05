@@ -95,7 +95,8 @@ Currently implemented:
 - Root Cargo workspace
 - `scene_schema` crate with parsing and validation
 - `scene_runtime` crate with component registry, depth-first traversal, command-based mutation, bounds calculation, and hit testing
-- `renderer` crate with render plan generation, primitive extraction, rough bounds estimation, and optional Skia CPU PNG export
+- `renderer` crate with render plan generation, primitive extraction, and optional Skia CPU PNG export
+- `renderer` now uses `scene_runtime` as the source of truth for shared bounds semantics
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
@@ -107,7 +108,7 @@ Currently implemented:
 Expected next implementation step:
 
 - Expand Skia rendering coverage beyond the current rectangle/ellipse/text baseline
-- Decide whether renderer should adopt `scene_runtime` geometry contracts more directly or keep a translation boundary
+- Add richer geometry coverage for path/effect-like nodes so runtime and renderer can stay aligned on more than the easy primitives
 - Decide whether more node families need typed accessors before renderer integration deepens
 
 ## Intended Repo Shape
@@ -196,7 +197,7 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 The next likely sequence is:
 
 1. Expand Skia rendering coverage on top of the current CPU export path
-2. Decide how renderer and runtime should share geometry contracts without coupling the layers badly
+2. Add richer shared geometry coverage for path/effect nodes
 3. Start export-oriented render interfaces around file output instead of just byte buffers
 4. Decide whether more node families need typed accessors before editor work expands
 5. Commit and push each slice separately

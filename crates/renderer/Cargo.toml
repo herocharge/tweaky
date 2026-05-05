@@ -9,5 +9,6 @@ skia-safe-backend = ["dep:skia-safe"]
 
 [dependencies]
 scene_schema = { path = "../scene_schema" }
+scene_runtime = { path = "../scene_runtime" }
 serde_json.workspace = true
 skia-safe = { version = "0.93.1", optional = true }
