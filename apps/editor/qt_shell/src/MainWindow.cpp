@@ -1,20 +1,26 @@
 #include "MainWindow.h"
 
+#include <QAction>
+#include <QApplication>
 #include <QDockWidget>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
 #include <QStatusBar>
+#include <QTreeWidgetItemIterator>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
-#include <QApplication>
 
 CanvasWidget::CanvasWidget(QWidget* parent) : QWidget(parent) {
   setMinimumSize(720, 520);
@@ -167,6 +173,7 @@ MainWindow::MainWindow(const QString& scenePath, QWidget* parent) : QMainWindow(
 void MainWindow::buildUi() {
   setWindowTitle("tweaky");
   resize(1380, 900);
+  buildMenus();
 
   canvas_ = new CanvasWidget(this);
   setCentralWidget(canvas_);
@@ -192,25 +199,135 @@ void MainWindow::buildUi() {
   statusBar()->showMessage("Ready");
 }
 
-void MainWindow::loadScene(const QString& scenePath) {
+void MainWindow::buildMenus() {
+  auto* fileMenu = menuBar()->addMenu("&File");
+
+  auto* openAction = fileMenu->addAction("&Open...");
+  openAction->setShortcut(QKeySequence::Open);
+  connect(openAction, &QAction::triggered, this, &MainWindow::openSceneDialog);
+
+  auto* reloadAction = fileMenu->addAction("&Reload");
+  reloadAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
+  connect(reloadAction, &QAction::triggered, this, &MainWindow::reloadScene);
+
+  fileMenu->addSeparator();
+
+  auto* exportAction = fileMenu->addAction("Export &PNG...");
+  exportAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
+  connect(exportAction, &QAction::triggered, this, &MainWindow::exportPngDialog);
+
+  fileMenu->addSeparator();
+
+  auto* quitAction = fileMenu->addAction("&Quit");
+  quitAction->setShortcut(QKeySequence::Quit);
+  connect(quitAction, &QAction::triggered, this, &QWidget::close);
+}
+
+bool MainWindow::loadScene(const QString& scenePath) {
   if (loadSceneFromEditorCli(scenePath)) {
-    setWindowTitle(QString("tweaky - %1").arg(scene_.name));
+    updateWindowTitle();
     canvas_->setScene(scene_);
     populateTree();
     statusBar()->showMessage(QString("Loaded %1 via editor view-model").arg(scenePath));
-    return;
+    return true;
   }
 
   if (loadSceneFromRawJson(scenePath)) {
-    setWindowTitle(QString("tweaky - %1").arg(scene_.name));
+    updateWindowTitle();
     canvas_->setScene(scene_);
     populateTree();
     statusBar()->showMessage(QString("Loaded %1 via raw JSON fallback").arg(scenePath));
-    return;
+    return true;
   }
 
   statusBar()->showMessage(QString("Failed to load %1").arg(scenePath));
   inspectorText_->setPlainText(QString("Failed to load scene file:\n%1").arg(scenePath));
+  return false;
+}
+
+void MainWindow::openSceneDialog() {
+  const QString startPath =
+      scene_.sourcePath.isEmpty() ? QDir::currentPath() : QFileInfo(scene_.sourcePath).absolutePath();
+  const auto filePath = QFileDialog::getOpenFileName(
+      this, "Open Scene", startPath, "Tweaky Scene (*.vsd.json);;JSON Files (*.json)");
+
+  if (filePath.isEmpty()) {
+    return;
+  }
+
+  if (!loadScene(filePath)) {
+    QMessageBox::warning(this, "Unable to Open Scene",
+                         QString("tweaky could not open:\n%1").arg(filePath));
+  }
+}
+
+void MainWindow::reloadScene() {
+  if (scene_.sourcePath.isEmpty()) {
+    QMessageBox::information(this, "Nothing to Reload",
+                             "No scene file is currently loaded.");
+    return;
+  }
+
+  if (!loadScene(scene_.sourcePath)) {
+    QMessageBox::warning(this, "Reload Failed",
+                         QString("tweaky could not reload:\n%1").arg(scene_.sourcePath));
+  }
+}
+
+void MainWindow::exportPngDialog() {
+  if (scene_.sourcePath.isEmpty()) {
+    QMessageBox::information(this, "Nothing to Export",
+                             "Load a scene before exporting a PNG.");
+    return;
+  }
+
+  const QFileInfo sceneFileInfo(scene_.sourcePath);
+  const QString defaultPath =
+      sceneFileInfo.absoluteDir().filePath(sceneFileInfo.completeBaseName() + ".png");
+  const auto outputPath =
+      QFileDialog::getSaveFileName(this, "Export PNG", defaultPath, "PNG Image (*.png)");
+
+  if (outputPath.isEmpty()) {
+    return;
+  }
+
+  if (!exportSceneToPng(outputPath)) {
+    QMessageBox::warning(this, "Export Failed",
+                         QString("tweaky could not export a PNG to:\n%1").arg(outputPath));
+  }
+}
+
+void MainWindow::updateWindowTitle() {
+  const auto sourceName =
+      scene_.sourcePath.isEmpty() ? QString("untitled") : QFileInfo(scene_.sourcePath).fileName();
+  setWindowTitle(QString("tweaky - %1 (%2)").arg(scene_.name, sourceName));
+}
+
+bool MainWindow::exportSceneToPng(const QString& outputPath) {
+  if (scene_.sourcePath.isEmpty()) {
+    return false;
+  }
+
+  QProcess process(this);
+  process.setProgram(editorCliPath());
+  process.setArguments({scene_.sourcePath, "--export", outputPath});
+  process.start();
+
+  if (!process.waitForStarted(2000)) {
+    return false;
+  }
+
+  if (!process.waitForFinished(15000) || process.exitStatus() != QProcess::NormalExit ||
+      process.exitCode() != 0) {
+    const QString stderrText = QString::fromUtf8(process.readAllStandardError()).trimmed();
+    if (!stderrText.isEmpty()) {
+      inspectorText_->setPlainText(stderrText);
+    }
+    return false;
+  }
+
+  statusBar()->showMessage(QString("Exported PNG to %1").arg(outputPath), 4000);
+  return true;
 }
 
 bool MainWindow::loadSceneFromEditorCli(const QString& scenePath) {

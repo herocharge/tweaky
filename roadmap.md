@@ -353,6 +353,7 @@ Current status:
 - Active and meaningfully underway
 - Qt Widgets shell builds and loads example scenes
 - Rust editor app now provides a view-model boundary that the Qt shell consumes for hierarchy, inspector, node bounds, and canvas preview data
+- Qt shell now has baseline document actions for open, reload, and export PNG
 - Remaining milestone work is primarily interactivity and document lifecycle, not shell bootstrap
 
 ## Milestone 4: AI Integration

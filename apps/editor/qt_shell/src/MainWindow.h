@@ -100,14 +100,20 @@ public:
   explicit MainWindow(const QString& scenePath, QWidget* parent = nullptr);
 
 private slots:
+  void openSceneDialog();
+  void reloadScene();
+  void exportPngDialog();
   void handleTreeSelectionChanged();
 
 private:
   void buildUi();
-  void loadScene(const QString& scenePath);
+  void buildMenus();
+  bool loadScene(const QString& scenePath);
   void populateTree();
   void populateTreeNode(QTreeWidgetItem* parentItem, const SceneNodeData& node);
   void updateInspector(const SceneNodeData& node);
+  void updateWindowTitle();
+  bool exportSceneToPng(const QString& outputPath);
   bool loadSceneFromEditorCli(const QString& scenePath);
   bool loadSceneFromRawJson(const QString& scenePath);
   QTreeWidgetItem* findTreeItemByNodeId(const QString& nodeId) const;
