@@ -1,5 +1,494 @@
-//! Runtime crate scaffold for the tweaky scene graph.
+use std::collections::HashMap;
 
-pub fn runtime_placeholder() -> &'static str {
-    "scene_runtime scaffold"
+use scene_schema::{SceneFile, SceneNode, Transform, ValidationIssue, validate_scene};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentDefinition {
+    pub display_name: &'static str,
+    pub can_have_children: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ComponentRegistry {
+    definitions: HashMap<scene_schema::NodeType, ComponentDefinition>,
+}
+
+impl ComponentRegistry {
+    pub fn mvp() -> Self {
+        use scene_schema::NodeType::{
+            Blur, Ellipse, Group, ImageLayer, Path, Rectangle, Shadow, Text,
+        };
+
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            Group,
+            ComponentDefinition {
+                display_name: "Group",
+                can_have_children: true,
+            },
+        );
+        definitions.insert(
+            Rectangle,
+            ComponentDefinition {
+                display_name: "Rectangle",
+                can_have_children: false,
+            },
+        );
+        definitions.insert(
+            Ellipse,
+            ComponentDefinition {
+                display_name: "Ellipse",
+                can_have_children: false,
+            },
+        );
+        definitions.insert(
+            Path,
+            ComponentDefinition {
+                display_name: "Path",
+                can_have_children: false,
+            },
+        );
+        definitions.insert(
+            Text,
+            ComponentDefinition {
+                display_name: "Text",
+                can_have_children: false,
+            },
+        );
+        definitions.insert(
+            ImageLayer,
+            ComponentDefinition {
+                display_name: "Image Layer",
+                can_have_children: false,
+            },
+        );
+        definitions.insert(
+            Shadow,
+            ComponentDefinition {
+                display_name: "Shadow",
+                can_have_children: false,
+            },
+        );
+        definitions.insert(
+            Blur,
+            ComponentDefinition {
+                display_name: "Blur",
+                can_have_children: false,
+            },
+        );
+
+        Self { definitions }
+    }
+
+    pub fn definition(&self, node_type: scene_schema::NodeType) -> Option<&ComponentDefinition> {
+        self.definitions.get(&node_type)
+    }
+
+    pub fn contains(&self, node_type: scene_schema::NodeType) -> bool {
+        self.definitions.contains_key(&node_type)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeDocument {
+    scene: SceneFile,
+    registry: ComponentRegistry,
+}
+
+impl RuntimeDocument {
+    pub fn new(scene: SceneFile, registry: ComponentRegistry) -> Result<Self, Vec<RuntimeIssue>> {
+        let mut issues = validate_scene(&scene)
+            .into_iter()
+            .map(RuntimeIssue::from_validation)
+            .collect::<Vec<_>>();
+        issues.extend(validate_registry_compatibility(&scene, &registry));
+
+        if issues.is_empty() {
+            Ok(Self { scene, registry })
+        } else {
+            Err(issues)
+        }
+    }
+
+    pub fn scene(&self) -> &SceneFile {
+        &self.scene
+    }
+
+    pub fn registry(&self) -> &ComponentRegistry {
+        &self.registry
+    }
+
+    pub fn find_node(&self, id: &str) -> Option<&SceneNode> {
+        find_node(&self.scene.document.root, id)
+    }
+
+    pub fn visit_depth_first<'a>(&'a self, mut visitor: impl FnMut(NodeVisit<'a>)) {
+        visit_depth_first(&self.scene.document.root, None, 0, &mut visitor);
+    }
+
+    pub fn apply(&mut self, command: DocumentCommand) -> Result<(), CommandError> {
+        match command {
+            DocumentCommand::RenameNode { node_id, new_name } => {
+                let node = find_node_mut(&mut self.scene.document.root, &node_id)
+                    .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
+                node.name = new_name;
+                Ok(())
+            }
+            DocumentCommand::SetNodeVisibility { node_id, visible } => {
+                let node = find_node_mut(&mut self.scene.document.root, &node_id)
+                    .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
+                node.visible = visible;
+                Ok(())
+            }
+            DocumentCommand::SetNodeTransform { node_id, transform } => {
+                let node = find_node_mut(&mut self.scene.document.root, &node_id)
+                    .ok_or_else(|| CommandError::node_not_found(node_id.clone()))?;
+                node.transform = transform;
+                Ok(())
+            }
+            DocumentCommand::InsertChild {
+                parent_id,
+                child,
+                index,
+            } => {
+                validate_insert_child(&self.scene.document.root, &parent_id, &child)?;
+                let parent = find_node_mut(&mut self.scene.document.root, &parent_id)
+                    .ok_or_else(|| CommandError::node_not_found(parent_id.clone()))?;
+
+                let insert_index = index.unwrap_or(parent.children.len());
+                if insert_index > parent.children.len() {
+                    return Err(CommandError::invalid_index(
+                        insert_index,
+                        parent.children.len(),
+                    ));
+                }
+                parent.children.insert(insert_index, child);
+                Ok(())
+            }
+            DocumentCommand::RemoveNode { node_id } => {
+                if self.scene.document.root.id == node_id {
+                    return Err(CommandError::CannotRemoveRoot);
+                }
+
+                remove_node(&mut self.scene.document.root, &node_id)
+                    .map(|_| ())
+                    .ok_or_else(|| CommandError::node_not_found(node_id))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DocumentCommand {
+    RenameNode {
+        node_id: String,
+        new_name: String,
+    },
+    SetNodeVisibility {
+        node_id: String,
+        visible: bool,
+    },
+    SetNodeTransform {
+        node_id: String,
+        transform: Transform,
+    },
+    InsertChild {
+        parent_id: String,
+        child: SceneNode,
+        index: Option<usize>,
+    },
+    RemoveNode {
+        node_id: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandError {
+    NodeNotFound { node_id: String },
+    CannotRemoveRoot,
+    InvalidChildParent { parent_id: String },
+    DuplicateNodeId { node_id: String },
+    InvalidInsertIndex { index: usize, len: usize },
+}
+
+impl CommandError {
+    fn node_not_found(node_id: String) -> Self {
+        Self::NodeNotFound { node_id }
+    }
+
+    fn invalid_index(index: usize, len: usize) -> Self {
+        Self::InvalidInsertIndex { index, len }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeIssue {
+    pub path: String,
+    pub message: String,
+}
+
+impl RuntimeIssue {
+    fn from_validation(issue: ValidationIssue) -> Self {
+        Self {
+            path: issue.path,
+            message: issue.message,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct NodeVisit<'a> {
+    pub depth: usize,
+    pub parent_id: Option<&'a str>,
+    pub node: &'a SceneNode,
+}
+
+pub fn validate_registry_compatibility(
+    scene: &SceneFile,
+    registry: &ComponentRegistry,
+) -> Vec<RuntimeIssue> {
+    let mut issues = Vec::new();
+    visit_depth_first(&scene.document.root, None, 0, &mut |visit| {
+        if let Some(definition) = registry.definition(visit.node.node_type) {
+            if !definition.can_have_children && !visit.node.children.is_empty() {
+                issues.push(RuntimeIssue {
+                    path: format!("node:{}", visit.node.id),
+                    message: format!(
+                        "component {} does not permit children",
+                        definition.display_name
+                    ),
+                });
+            }
+        } else {
+            issues.push(RuntimeIssue {
+                path: format!("node:{}", visit.node.id),
+                message: format!("unregistered node type {:?}", visit.node.node_type),
+            });
+        }
+    });
+    issues
+}
+
+pub fn find_node<'a>(node: &'a SceneNode, id: &str) -> Option<&'a SceneNode> {
+    if node.id == id {
+        return Some(node);
+    }
+
+    node.children.iter().find_map(|child| find_node(child, id))
+}
+
+pub fn find_node_mut<'a>(node: &'a mut SceneNode, id: &str) -> Option<&'a mut SceneNode> {
+    if node.id == id {
+        return Some(node);
+    }
+
+    for child in &mut node.children {
+        if let Some(found) = find_node_mut(child, id) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
+pub fn visit_depth_first<'a>(
+    node: &'a SceneNode,
+    parent_id: Option<&'a str>,
+    depth: usize,
+    visitor: &mut impl FnMut(NodeVisit<'a>),
+) {
+    visitor(NodeVisit {
+        depth,
+        parent_id,
+        node,
+    });
+
+    for child in &node.children {
+        visit_depth_first(child, Some(node.id.as_str()), depth + 1, visitor);
+    }
+}
+
+fn remove_node(node: &mut SceneNode, target_id: &str) -> Option<SceneNode> {
+    if let Some(index) = node.children.iter().position(|child| child.id == target_id) {
+        return Some(node.children.remove(index));
+    }
+
+    for child in &mut node.children {
+        if let Some(removed) = remove_node(child, target_id) {
+            return Some(removed);
+        }
+    }
+
+    None
+}
+
+fn validate_insert_child(
+    root: &SceneNode,
+    parent_id: &str,
+    child: &SceneNode,
+) -> Result<(), CommandError> {
+    let parent = find_node(root, parent_id)
+        .ok_or_else(|| CommandError::node_not_found(parent_id.to_string()))?;
+
+    if !parent.node_type.can_have_children() {
+        return Err(CommandError::InvalidChildParent {
+            parent_id: parent_id.to_string(),
+        });
+    }
+
+    if find_node(root, &child.id).is_some() {
+        return Err(CommandError::DuplicateNodeId {
+            node_id: child.id.clone(),
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use scene_schema::{NodeType, Transform, parse_scene_str};
+
+    use super::{
+        ComponentRegistry, DocumentCommand, RuntimeDocument, find_node,
+        validate_registry_compatibility,
+    };
+
+    const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
+
+    fn make_runtime() -> RuntimeDocument {
+        let scene = parse_scene_str(BASIC_POSTER).expect("example scene should parse");
+        RuntimeDocument::new(scene, ComponentRegistry::mvp()).expect("runtime should be valid")
+    }
+
+    #[test]
+    fn registry_accepts_example_document() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("example scene should parse");
+        let issues = validate_registry_compatibility(&scene, &ComponentRegistry::mvp());
+        assert!(issues.is_empty(), "expected no issues, found {issues:?}");
+    }
+
+    #[test]
+    fn visits_scene_depth_first() {
+        let runtime = make_runtime();
+        let mut visited = Vec::new();
+
+        runtime.visit_depth_first(|visit| {
+            visited.push((visit.depth, visit.node.id.clone()));
+        });
+
+        assert_eq!(
+            visited,
+            vec![
+                (0, "root".to_string()),
+                (1, "bg_rect".to_string()),
+                (1, "headline".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn renames_node_with_command() {
+        let mut runtime = make_runtime();
+        runtime
+            .apply(DocumentCommand::RenameNode {
+                node_id: "headline".to_string(),
+                new_name: "Title".to_string(),
+            })
+            .expect("rename should succeed");
+
+        let node = runtime.find_node("headline").expect("node should exist");
+        assert_eq!(node.name, "Title");
+    }
+
+    #[test]
+    fn updates_transform_with_command() {
+        let mut runtime = make_runtime();
+        runtime
+            .apply(DocumentCommand::SetNodeTransform {
+                node_id: "headline".to_string(),
+                transform: Transform {
+                    x: 240.0,
+                    y: 260.0,
+                    scale_x: 1.0,
+                    scale_y: 1.0,
+                    rotation: 5.0,
+                    opacity: 0.8,
+                },
+            })
+            .expect("transform update should succeed");
+
+        let node = runtime.find_node("headline").expect("node should exist");
+        assert_eq!(node.transform.x, 240.0);
+        assert_eq!(node.transform.opacity, 0.8);
+    }
+
+    #[test]
+    fn inserts_child_under_group() {
+        let mut runtime = make_runtime();
+        let new_child = scene_schema::SceneNode {
+            id: "new_rect".to_string(),
+            node_type: NodeType::Rectangle,
+            name: "New Rect".to_string(),
+            visible: true,
+            locked: false,
+            blend_mode: scene_schema::BlendMode::Normal,
+            transform: Transform {
+                x: 10.0,
+                y: 10.0,
+                scale_x: 1.0,
+                scale_y: 1.0,
+                rotation: 0.0,
+                opacity: 1.0,
+            },
+            params: Default::default(),
+            style: Default::default(),
+            children: Vec::new(),
+            meta: Default::default(),
+        };
+
+        runtime
+            .apply(DocumentCommand::InsertChild {
+                parent_id: "root".to_string(),
+                child: new_child,
+                index: None,
+            })
+            .expect("insert should succeed");
+
+        assert!(find_node(&runtime.scene().document.root, "new_rect").is_some());
+    }
+
+    #[test]
+    fn rejects_insert_into_leaf_node() {
+        let mut runtime = make_runtime();
+        let new_child = runtime
+            .find_node("bg_rect")
+            .expect("node should exist")
+            .clone();
+
+        let error = runtime
+            .apply(DocumentCommand::InsertChild {
+                parent_id: "headline".to_string(),
+                child: new_child,
+                index: None,
+            })
+            .expect_err("insert should fail");
+
+        assert!(matches!(
+            error,
+            super::CommandError::InvalidChildParent { .. }
+        ));
+    }
+
+    #[test]
+    fn removes_node_from_scene() {
+        let mut runtime = make_runtime();
+        runtime
+            .apply(DocumentCommand::RemoveNode {
+                node_id: "bg_rect".to_string(),
+            })
+            .expect("remove should succeed");
+
+        assert!(runtime.find_node("bg_rect").is_none());
+    }
 }
