@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use scene_schema::{SceneFile, SceneNode, Transform, ValidationIssue, validate_scene};
+use scene_schema::{PathPoint, SceneFile, SceneNode, Transform, ValidationIssue, validate_scene};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
@@ -388,7 +388,10 @@ pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
                 params.radius_y * 2.0,
             ))
         }
-        scene_schema::NodeType::Path => None,
+        scene_schema::NodeType::Path => {
+            let params = node.path_params()?;
+            bounds_from_points(&node.transform, &params.points)
+        }
         scene_schema::NodeType::Text => {
             let params = node.text_params()?;
             Some(estimate_text_bounds(
@@ -497,6 +500,45 @@ fn estimate_text_bounds(transform: &Transform, text: &str, font_size: f64) -> Re
     )
 }
 
+fn bounds_from_points(transform: &Transform, points: &[PathPoint]) -> Option<Rect> {
+    let mut transformed = points
+        .iter()
+        .map(|point| transform_point(transform, point.x, point.y));
+
+    let first = transformed.next()?;
+    let mut min_x = first.x;
+    let mut min_y = first.y;
+    let mut max_x = first.x;
+    let mut max_y = first.y;
+
+    for point in transformed {
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+
+    Some(Rect {
+        x: min_x,
+        y: min_y,
+        width: max_x - min_x,
+        height: max_y - min_y,
+    })
+}
+
+fn transform_point(transform: &Transform, x: f64, y: f64) -> Point {
+    let scaled_x = x * transform.scale_x;
+    let scaled_y = y * transform.scale_y;
+    let radians = transform.rotation.to_radians();
+    let cos = radians.cos();
+    let sin = radians.sin();
+
+    Point {
+        x: transform.x + scaled_x * cos - scaled_y * sin,
+        y: transform.y + scaled_x * sin + scaled_y * cos,
+    }
+}
+
 fn hit_test_node(node: &SceneNode, point: Point, hits: &mut Vec<String>) {
     if !node.visible {
         return;
@@ -523,6 +565,7 @@ mod tests {
     };
 
     const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
+    const SHAPES_STUDY: &str = include_str!("../../../examples/shapes_study.vsd.json");
 
     fn make_runtime() -> RuntimeDocument {
         let scene = parse_scene_str(BASIC_POSTER).expect("example scene should parse");
@@ -718,5 +761,15 @@ mod tests {
         };
 
         assert!(bounds_for_node(&path_node).is_none());
+    }
+
+    #[test]
+    fn computes_bounds_for_path_with_geometry() {
+        let shapes = parse_scene_str(SHAPES_STUDY).expect("shapes scene should parse");
+        let bounds =
+            bounds_for_node(&shapes.document.root.children[2]).expect("path bounds should exist");
+
+        assert!(bounds.width > 0.0);
+        assert!(bounds.height > 0.0);
     }
 }

@@ -1,10 +1,13 @@
 use std::fmt;
 use std::path::Path;
 
-use skia_safe::{Color, EncodedImageFormat, Font, Paint, RRect, Rect as SkRect, Surface, surfaces};
+use skia_safe::{
+    Color, EncodedImageFormat, Font, Paint, PathBuilder, RRect, Rect as SkRect, Surface, surfaces,
+};
 
 use crate::{
-    EllipsePrimitive, RenderBackground, RenderItem, RenderKind, RenderPlan, TextPrimitive,
+    EllipsePrimitive, PathPrimitive, RenderBackground, RenderItem, RenderKind, RenderPlan,
+    TextPrimitive,
 };
 
 #[derive(Debug)]
@@ -94,9 +97,7 @@ fn draw_item(canvas: &skia_safe::Canvas, item: &RenderItem) {
             }
         }
         RenderKind::Ellipse(primitive) => draw_ellipse(canvas, item, primitive),
-        RenderKind::Path(_primitive) => {
-            // Path rendering will become meaningful once path params are typed and validated.
-        }
+        RenderKind::Path(primitive) => draw_path(canvas, item, primitive),
         RenderKind::Text(primitive) => draw_text(canvas, item, primitive),
         RenderKind::ImageLayer(_primitive) => {
             // Image loading and sampling will be wired in once the resource layer grows past metadata.
@@ -107,6 +108,28 @@ fn draw_item(canvas: &skia_safe::Canvas, item: &RenderItem) {
 fn draw_ellipse(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &EllipsePrimitive) {
     let paint = paint_for_fill(item, primitive.fill.as_deref());
     canvas.draw_oval(sk_rect(primitive.bounds), &paint);
+}
+
+fn draw_path(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &PathPrimitive) {
+    if primitive.points.is_empty() {
+        return;
+    }
+
+    let paint = paint_for_fill(item, primitive.fill.as_deref());
+    let mut path = PathBuilder::new();
+    let first = primitive.points[0];
+    path.move_to((first.x as f32, first.y as f32));
+
+    for point in primitive.points.iter().skip(1) {
+        path.line_to((point.x as f32, point.y as f32));
+    }
+
+    if primitive.closed {
+        path.close();
+    }
+
+    let path = path.detach();
+    canvas.draw_path(&path, &paint);
 }
 
 fn draw_text(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &TextPrimitive) {

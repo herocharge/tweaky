@@ -82,6 +82,36 @@
           },
           "children": [],
           "meta": {}
+        },
+        {
+          "id": "diamond",
+          "type": "Path",
+          "name": "Diamond",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 780,
+            "y": 180,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 8,
+            "opacity": 0.9
+          },
+          "params": {
+            "closed": true,
+            "points": [
+              { "x": 120, "y": 0 },
+              { "x": 240, "y": 120 },
+              { "x": 120, "y": 240 },
+              { "x": 0, "y": 120 }
+            ]
+          },
+          "style": {
+            "fill": "#111111"
+          },
+          "children": [],
+          "meta": {}
         }
       ],
       "meta": {}

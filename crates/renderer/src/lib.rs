@@ -50,6 +50,8 @@ pub struct EllipsePrimitive {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathPrimitive {
     pub bounds: Option<Rect>,
+    pub points: Vec<Point>,
+    pub closed: bool,
     pub fill: Option<String>,
 }
 
@@ -156,9 +158,34 @@ fn ellipse_primitive(node: &SceneNode) -> Option<EllipsePrimitive> {
 }
 
 fn path_primitive(node: &SceneNode) -> PathPrimitive {
+    let params = node.path_params();
     PathPrimitive {
-        bounds: None,
+        bounds: bounds_for_node(node),
+        points: params
+            .as_ref()
+            .map(|params| {
+                params
+                    .points
+                    .iter()
+                    .map(|point| transform_path_point(node, point.x, point.y))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        closed: params.as_ref().map(|params| params.closed).unwrap_or(true),
         fill: node.style_fill(),
+    }
+}
+
+fn transform_path_point(node: &SceneNode, x: f64, y: f64) -> Point {
+    let scaled_x = x * node.transform.scale_x;
+    let scaled_y = y * node.transform.scale_y;
+    let radians = node.transform.rotation.to_radians();
+    let cos = radians.cos();
+    let sin = radians.sin();
+
+    Point {
+        x: node.transform.x + scaled_x * cos - scaled_y * sin,
+        y: node.transform.y + scaled_x * sin + scaled_y * cos,
     }
 }
 
@@ -195,6 +222,7 @@ mod tests {
 
     const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
     const HYBRID_SCENE: &str = include_str!("../../../examples/hybrid_scene.vsd.json");
+    const SHAPES_STUDY: &str = include_str!("../../../examples/shapes_study.vsd.json");
 
     #[test]
     fn builds_render_plan_for_basic_poster() {
@@ -225,6 +253,26 @@ mod tests {
 
         assert_eq!(backend.backgrounds, vec!["#f5f1e8".to_string()]);
         assert_eq!(backend.items.len(), 2);
+    }
+
+    #[test]
+    fn builds_path_render_item() {
+        let scene = parse_scene_str(SHAPES_STUDY).expect("scene should parse");
+        let plan = build_render_plan(&scene);
+        let path_item = plan
+            .items
+            .iter()
+            .find(|item| item.node_id == "diamond")
+            .expect("path item should exist");
+
+        match &path_item.kind {
+            super::RenderKind::Path(path) => {
+                assert_eq!(path.points.len(), 4);
+                assert!(path.closed);
+                assert!(path.bounds.is_some());
+            }
+            other => panic!("expected path render kind, found {other:?}"),
+        }
     }
 
     #[test]

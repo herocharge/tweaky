@@ -122,6 +122,18 @@ pub struct EllipseParams {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct PathPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathParams {
+    pub points: Vec<PathPoint>,
+    pub closed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextParams {
     pub text: String,
     pub font_size: f64,
@@ -159,6 +171,18 @@ impl SceneNode {
             font_size: get_number(&self.params, "fontSize").unwrap_or(16.0),
             font_family: get_string(&self.params, "fontFamily"),
             line_height: get_number(&self.params, "lineHeight").unwrap_or(1.2),
+        })
+    }
+
+    pub fn path_params(&self) -> Option<PathParams> {
+        let points = get_points(&self.params, "points")?;
+        if points.is_empty() {
+            return None;
+        }
+
+        Some(PathParams {
+            points,
+            closed: get_bool(&self.params, "closed").unwrap_or(true),
         })
     }
 
@@ -305,6 +329,25 @@ fn get_string(object: &JsonObject, key: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn get_bool(object: &JsonObject, key: &str) -> Option<bool> {
+    object.get(key)?.as_bool()
+}
+
+fn get_points(object: &JsonObject, key: &str) -> Option<Vec<PathPoint>> {
+    let points = object.get(key)?.as_array()?;
+    let mut parsed = Vec::with_capacity(points.len());
+
+    for point in points {
+        let point = point.as_object()?;
+        parsed.push(PathPoint {
+            x: point.get("x")?.as_f64()?,
+            y: point.get("y")?.as_f64()?,
+        });
+    }
+
+    Some(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NodeType, SCHEMA_VERSION, parse_scene_str, validate_scene};
@@ -380,5 +423,16 @@ mod tests {
         assert_eq!(params.text, "TWEAK EVERYTHING");
         assert_eq!(params.font_size, 84.0);
         assert_eq!(params.font_family.as_deref(), Some("Inter"));
+    }
+
+    #[test]
+    fn exposes_typed_path_params() {
+        let parsed = parse_scene_str(SHAPES_STUDY).expect("example scene should parse");
+        let params = parsed.document.root.children[2]
+            .path_params()
+            .expect("path params should exist");
+
+        assert_eq!(params.points.len(), 4);
+        assert!(params.closed);
     }
 }

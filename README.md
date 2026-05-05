@@ -18,6 +18,14 @@ Current implementation artifacts:
 - [crates/renderer](./crates/renderer): backend-agnostic render plan and optional Skia CPU raster backend, now consuming runtime geometry semantics
 - [Cargo.toml](./Cargo.toml): workspace root
 
+Current rendering coverage:
+
+- `Rectangle`
+- `Ellipse`
+- `Text`
+- `Path` with point-list geometry
+- `ImageLayer` planning support
+
 Useful renderer commands:
 
 - `cargo test`

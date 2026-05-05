@@ -529,3 +529,4 @@ Current leaning:
 - Treat the built-in node vocabulary as a standard library, and let external tools generate that IR instead of embedding opaque routines in documents
 - Put shared geometry and hit-testing semantics in core/runtime land rather than tying editor behavior to Skia-specific APIs
 - Let renderer consume runtime geometry semantics where practical instead of duplicating bounds math
+- Grow geometry support incrementally: start with simple point-list paths before attempting richer vector semantics
