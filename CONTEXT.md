@@ -107,6 +107,7 @@ Currently implemented:
 - valid inspector edits now auto-apply without requiring the button, and scene refreshes preserve the current node selection by reusing the edited view model
 - the Qt shell now edits a temp working copy instead of the original file directly; `Save` and `Save As` persist that working copy intentionally, export uses the working copy, and open/reload/close prompt on unsaved changes
 - the Qt shell supports arrow-key nudging for the selected node, with `Shift` for larger 10-unit steps, while intentionally ignoring arrow keys when text fields are focused
+- the Qt shell now supports corner-handle resizing for `Rectangle`, `Ellipse`, and `ImageLayer` nodes by rewriting `x`/`y` plus the corresponding size params through the Rust edit path
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold

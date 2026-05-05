@@ -4,6 +4,7 @@
 #include <QCloseEvent>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QMainWindow>
 #include <QMap>
 #include <QRectF>
@@ -22,6 +23,14 @@ struct SceneRectData {
     double y = 0.0;
     double width = 0.0;
     double height = 0.0;
+};
+
+enum class ResizeHandle {
+    None = 0,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
 };
 
 struct ScenePointData {
@@ -97,6 +106,8 @@ signals:
   void nodePicked(const QString& nodeId);
   void nodeDragPreview(double x, double y);
   void nodeDragCommitted(const QString& nodeId, double x, double y);
+  void nodeResizePreview(const QString& nodeId, double x, double y, double width, double height);
+  void nodeResizeCommitted(const QString& nodeId, double x, double y, double width, double height);
 
 protected:
   void paintEvent(QPaintEvent* event) override;
@@ -109,8 +120,12 @@ private:
   QPointF mapScenePoint(const ScenePointData& point, const QRectF& canvasRect) const;
   QRectF mapSceneRect(const SceneRectData& rect, const QRectF& canvasRect) const;
   QPointF activeDragWidgetOffset() const;
+  SceneRectData activeResizeSceneRect() const;
   QPointF scenePositionForWidgetPoint(const QPointF& widgetPoint) const;
   QString pickNodeAt(const QPointF& widgetPoint) const;
+  bool selectedNodeSupportsResize() const;
+  QRectF selectedOutlineRect(const QRectF& canvasRect) const;
+  ResizeHandle resizeHandleAt(const QPointF& widgetPoint, const QRectF& canvasRect) const;
   SceneDocumentData scene_;
   SceneNodeData selectedNode_;
   bool dragActive_ = false;
@@ -119,6 +134,11 @@ private:
   QPointF dragCurrentWidgetPos_;
   double dragStartSceneX_ = 0.0;
   double dragStartSceneY_ = 0.0;
+  bool resizeActive_ = false;
+  ResizeHandle activeResizeHandle_ = ResizeHandle::None;
+  QString resizeNodeId_;
+  QPointF resizeCurrentWidgetPos_;
+  SceneRectData resizeStartSceneRect_;
 };
 
 class MainWindow : public QMainWindow {
@@ -138,6 +158,10 @@ private slots:
   void handleCanvasNodePicked(const QString& nodeId);
   void handleCanvasNodeDragPreview(double x, double y);
   void handleCanvasNodeDragCommitted(const QString& nodeId, double x, double y);
+  void handleCanvasNodeResizePreview(const QString& nodeId, double x, double y,
+                                     double width, double height);
+  void handleCanvasNodeResizeCommitted(const QString& nodeId, double x, double y,
+                                       double width, double height);
   void handleTreeSelectionChanged();
 
 private:
@@ -158,6 +182,7 @@ private:
   bool saveWorkingCopyToPath(const QString& outputPath);
   bool maybeResolveUnsavedChanges(const QString& actionLabel);
   bool nudgeSelectedNode(double deltaX, double deltaY);
+  bool resizeNodeToBounds(const QString& nodeId, double x, double y, double width, double height);
   bool exportSceneToPng(const QString& outputPath);
   bool applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x, double y,
                               const QString& paramsJson, const QString& styleJson);

@@ -30,6 +30,23 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 
+namespace {
+
+constexpr qreal kSelectionPadding = 6.0;
+constexpr qreal kHandleSize = 8.0;
+constexpr double kMinResizeExtent = 8.0;
+
+QList<QPointF> resizeHandleCenters(const QRectF& outlineRect) {
+  return {
+      outlineRect.topLeft(),
+      outlineRect.topRight(),
+      outlineRect.bottomLeft(),
+      outlineRect.bottomRight(),
+  };
+}
+
+}  // namespace
+
 CanvasWidget::CanvasWidget(QWidget* parent) : QWidget(parent) {
   setMinimumSize(720, 520);
   setAutoFillBackground(true);
@@ -80,16 +97,20 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
   painter.drawText(QRectF(56.0, 108.0, canvasRect.width() - 64.0, 72.0), summary);
 
   const QPointF dragOffset = activeDragWidgetOffset();
+  const SceneRectData resizeSceneRect = activeResizeSceneRect();
 
   for (const auto& item : scene_.renderItems) {
     const QColor fill = item.fill.isValid() ? item.fill : QColor("#c8bfb1");
     painter.setOpacity(item.opacity);
     const bool dragSelectedItem = dragActive_ && item.nodeId == dragNodeId_;
-    const bool simplifyForInteraction = dragActive_;
+    const bool resizeSelectedItem = resizeActive_ && item.nodeId == resizeNodeId_;
+    const bool simplifyForInteraction = dragActive_ || resizeActive_;
 
     if (dragSelectedItem) {
       painter.save();
       painter.translate(dragOffset);
+    } else if (resizeSelectedItem) {
+      painter.save();
     }
 
     auto shadowOffsetForItem = [&](const SceneCanvasItemData& shadowItem) -> QPointF {
@@ -146,36 +167,40 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     };
 
     if (item.kind == "Rectangle" && item.hasBounds) {
+      const SceneRectData effectiveBounds =
+          resizeSelectedItem ? resizeSceneRect : item.bounds;
       drawApproxBlur([&](const QColor& blurColor) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(blurColor);
-        painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
+        painter.drawRoundedRect(mapSceneRect(effectiveBounds, canvasRect), item.cornerRadius,
                                 item.cornerRadius);
       });
       drawApproxShadow([&](const QColor& shadowColor) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(shadowColor);
-        painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
+        painter.drawRoundedRect(mapSceneRect(effectiveBounds, canvasRect), item.cornerRadius,
                                 item.cornerRadius);
       });
       painter.setPen(Qt::NoPen);
       painter.setBrush(fill);
-      painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
+      painter.drawRoundedRect(mapSceneRect(effectiveBounds, canvasRect), item.cornerRadius,
                               item.cornerRadius);
     } else if (item.kind == "Ellipse" && item.hasBounds) {
+      const SceneRectData effectiveBounds =
+          resizeSelectedItem ? resizeSceneRect : item.bounds;
       drawApproxBlur([&](const QColor& blurColor) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(blurColor);
-        painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
+        painter.drawEllipse(mapSceneRect(effectiveBounds, canvasRect));
       });
       drawApproxShadow([&](const QColor& shadowColor) {
         painter.setPen(Qt::NoPen);
         painter.setBrush(shadowColor);
-        painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
+        painter.drawEllipse(mapSceneRect(effectiveBounds, canvasRect));
       });
       painter.setPen(Qt::NoPen);
       painter.setBrush(fill);
-      painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
+      painter.drawEllipse(mapSceneRect(effectiveBounds, canvasRect));
     } else if (item.kind == "Path" && !item.points.isEmpty()) {
       drawApproxShadow([&](const QColor& shadowColor) {
         QPainterPath shadowPath;
@@ -240,7 +265,9 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
       painter.setPen(fill);
       painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
     } else if (item.kind == "ImageLayer" && item.hasBounds) {
-      const QRectF imageRect = mapSceneRect(item.bounds, canvasRect);
+      const SceneRectData effectiveBounds =
+          resizeSelectedItem ? resizeSceneRect : item.bounds;
+      const QRectF imageRect = mapSceneRect(effectiveBounds, canvasRect);
       painter.setPen(QPen(QColor("#6e5a4d"), 1.5, Qt::DashLine));
       painter.setBrush(QColor("#efe7da"));
       painter.drawRect(imageRect);
@@ -250,37 +277,35 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
                        item.imageRef.isEmpty() ? QString("ImageLayer") : item.imageRef);
     }
 
-    if (dragSelectedItem) {
+    if (dragSelectedItem || resizeSelectedItem) {
       painter.restore();
     }
   }
 
   if (selectedNode_.hasBounds) {
-    QRectF selectedRect = mapSceneRect(selectedNode_.bounds, canvasRect);
+    QRectF selectedRect = mapSceneRect(
+        resizeActive_ && selectedNode_.id == resizeNodeId_ ? resizeSceneRect : selectedNode_.bounds,
+        canvasRect);
     if (dragActive_ && selectedNode_.id == dragNodeId_) {
       selectedRect.translate(dragOffset);
     }
-    const QRectF outlineRect = selectedRect.adjusted(-6.0, -6.0, 6.0, 6.0);
+    const QRectF outlineRect = selectedRect.adjusted(
+        -kSelectionPadding, -kSelectionPadding, kSelectionPadding, kSelectionPadding);
     painter.setOpacity(1.0);
     painter.setPen(QPen(QColor("#d55a2a"), 1.75));
     painter.setBrush(Qt::NoBrush);
     painter.drawRect(outlineRect);
 
-    const qreal handleSize = 8.0;
-    const QColor handleColor("#fff8ee");
-    const QColor handleStroke("#d55a2a");
-    const QList<QPointF> handles = {
-        outlineRect.topLeft(),
-        outlineRect.topRight(),
-        outlineRect.bottomLeft(),
-        outlineRect.bottomRight(),
-    };
+    if (selectedNodeSupportsResize()) {
+      const QColor handleColor("#fff8ee");
+      const QColor handleStroke("#d55a2a");
 
-    painter.setPen(QPen(handleStroke, 1.5));
-    painter.setBrush(handleColor);
-    for (const auto& handleCenter : handles) {
-      painter.drawRect(QRectF(handleCenter.x() - handleSize * 0.5,
-                              handleCenter.y() - handleSize * 0.5, handleSize, handleSize));
+      painter.setPen(QPen(handleStroke, 1.5));
+      painter.setBrush(handleColor);
+      for (const auto& handleCenter : resizeHandleCenters(outlineRect)) {
+        painter.drawRect(QRectF(handleCenter.x() - kHandleSize * 0.5,
+                                handleCenter.y() - kHandleSize * 0.5, kHandleSize, kHandleSize));
+      }
     }
   }
 
@@ -331,6 +356,51 @@ QPointF CanvasWidget::activeDragWidgetOffset() const {
   return dragCurrentWidgetPos_ - dragStartWidgetPos_;
 }
 
+SceneRectData CanvasWidget::activeResizeSceneRect() const {
+  if (!resizeActive_) {
+    return selectedNode_.bounds;
+  }
+
+  const QPointF sceneCurrent = scenePositionForWidgetPoint(resizeCurrentWidgetPos_);
+  const double minX = resizeStartSceneRect_.x;
+  const double minY = resizeStartSceneRect_.y;
+  const double maxX = resizeStartSceneRect_.x + resizeStartSceneRect_.width;
+  const double maxY = resizeStartSceneRect_.y + resizeStartSceneRect_.height;
+
+  double left = minX;
+  double right = maxX;
+  double top = minY;
+  double bottom = maxY;
+
+  switch (activeResizeHandle_) {
+    case ResizeHandle::TopLeft:
+      left = std::min(sceneCurrent.x(), maxX - kMinResizeExtent);
+      top = std::min(sceneCurrent.y(), maxY - kMinResizeExtent);
+      break;
+    case ResizeHandle::TopRight:
+      right = std::max(sceneCurrent.x(), minX + kMinResizeExtent);
+      top = std::min(sceneCurrent.y(), maxY - kMinResizeExtent);
+      break;
+    case ResizeHandle::BottomLeft:
+      left = std::min(sceneCurrent.x(), maxX - kMinResizeExtent);
+      bottom = std::max(sceneCurrent.y(), minY + kMinResizeExtent);
+      break;
+    case ResizeHandle::BottomRight:
+      right = std::max(sceneCurrent.x(), minX + kMinResizeExtent);
+      bottom = std::max(sceneCurrent.y(), minY + kMinResizeExtent);
+      break;
+    case ResizeHandle::None:
+      break;
+  }
+
+  return SceneRectData{
+      left,
+      top,
+      std::max(kMinResizeExtent, right - left),
+      std::max(kMinResizeExtent, bottom - top),
+  };
+}
+
 QPointF CanvasWidget::scenePositionForWidgetPoint(const QPointF& widgetPoint) const {
   const QRectF canvasRect = canvasRectForWidget();
   if (scene_.width <= 0.0 || scene_.height <= 0.0) {
@@ -342,8 +412,72 @@ QPointF CanvasWidget::scenePositionForWidgetPoint(const QPointF& widgetPoint) co
   return QPointF((widgetPoint.x() - canvasRect.x()) / scaleX, (widgetPoint.y() - canvasRect.y()) / scaleY);
 }
 
+bool CanvasWidget::selectedNodeSupportsResize() const {
+  return selectedNode_.type == "Rectangle" || selectedNode_.type == "Ellipse" ||
+         selectedNode_.type == "ImageLayer";
+}
+
+QRectF CanvasWidget::selectedOutlineRect(const QRectF& canvasRect) const {
+  if (!selectedNode_.hasBounds) {
+    return QRectF();
+  }
+
+  QRectF selectedRect = mapSceneRect(selectedNode_.bounds, canvasRect);
+  if (dragActive_ && selectedNode_.id == dragNodeId_) {
+    selectedRect.translate(activeDragWidgetOffset());
+  } else if (resizeActive_ && selectedNode_.id == resizeNodeId_) {
+    selectedRect = mapSceneRect(activeResizeSceneRect(), canvasRect);
+  }
+
+  return selectedRect.adjusted(
+      -kSelectionPadding, -kSelectionPadding, kSelectionPadding, kSelectionPadding);
+}
+
+ResizeHandle CanvasWidget::resizeHandleAt(const QPointF& widgetPoint, const QRectF& canvasRect) const {
+  if (!selectedNodeSupportsResize() || !selectedNode_.hasBounds) {
+    return ResizeHandle::None;
+  }
+
+  const QRectF outlineRect = selectedOutlineRect(canvasRect);
+  const QList<QPointF> handleCenters = resizeHandleCenters(outlineRect);
+  for (qsizetype index = 0; index < handleCenters.size(); ++index) {
+    const QRectF handleRect(handleCenters.at(index).x() - kHandleSize * 0.5,
+                            handleCenters.at(index).y() - kHandleSize * 0.5,
+                            kHandleSize, kHandleSize);
+    if (handleRect.contains(widgetPoint)) {
+      switch (index) {
+        case 0:
+          return ResizeHandle::TopLeft;
+        case 1:
+          return ResizeHandle::TopRight;
+        case 2:
+          return ResizeHandle::BottomLeft;
+        case 3:
+          return ResizeHandle::BottomRight;
+        default:
+          break;
+      }
+    }
+  }
+
+  return ResizeHandle::None;
+}
+
 void CanvasWidget::mousePressEvent(QMouseEvent* event) {
   if (event->button() == Qt::LeftButton) {
+    const QRectF canvasRect = canvasRectForWidget();
+    const ResizeHandle handle = resizeHandleAt(event->position(), canvasRect);
+    if (handle != ResizeHandle::None) {
+      resizeActive_ = true;
+      activeResizeHandle_ = handle;
+      resizeNodeId_ = selectedNode_.id;
+      resizeCurrentWidgetPos_ = event->position();
+      resizeStartSceneRect_ = selectedNode_.bounds;
+      update();
+      event->accept();
+      return;
+    }
+
     const auto nodeId = pickNodeAt(event->position());
     if (!nodeId.isEmpty()) {
       if (nodeId == selectedNode_.id) {
@@ -367,6 +501,15 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
 }
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
+  if (resizeActive_) {
+    resizeCurrentWidgetPos_ = event->position();
+    const SceneRectData nextRect = activeResizeSceneRect();
+    emit nodeResizePreview(resizeNodeId_, nextRect.x, nextRect.y, nextRect.width, nextRect.height);
+    update();
+    event->accept();
+    return;
+  }
+
   if (dragActive_) {
     dragCurrentWidgetPos_ = event->position();
     const QPointF sceneStart = scenePositionForWidgetPoint(dragStartWidgetPos_);
@@ -383,6 +526,19 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
+  if (resizeActive_ && event->button() == Qt::LeftButton) {
+    resizeCurrentWidgetPos_ = event->position();
+    const SceneRectData nextRect = activeResizeSceneRect();
+    emit nodeResizeCommitted(resizeNodeId_, nextRect.x, nextRect.y, nextRect.width,
+                             nextRect.height);
+    resizeActive_ = false;
+    activeResizeHandle_ = ResizeHandle::None;
+    resizeNodeId_.clear();
+    update();
+    event->accept();
+    return;
+  }
+
   if (dragActive_ && event->button() == Qt::LeftButton) {
     dragCurrentWidgetPos_ = event->position();
     const QPointF sceneStart = scenePositionForWidgetPoint(dragStartWidgetPos_);
@@ -402,6 +558,10 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 QString CanvasWidget::pickNodeAt(const QPointF& widgetPoint) const {
+  if (resizeActive_) {
+    return QString();
+  }
+
   const QRectF canvasRect = canvasRectForWidget();
   for (auto it = scene_.renderItems.crbegin(); it != scene_.renderItems.crend(); ++it) {
     if (!it->hasBounds) {
@@ -478,6 +638,10 @@ void MainWindow::buildUi() {
   connect(canvas_, &CanvasWidget::nodeDragPreview, this, &MainWindow::handleCanvasNodeDragPreview);
   connect(canvas_, &CanvasWidget::nodeDragCommitted, this,
           &MainWindow::handleCanvasNodeDragCommitted);
+  connect(canvas_, &CanvasWidget::nodeResizePreview, this,
+          &MainWindow::handleCanvasNodeResizePreview);
+  connect(canvas_, &CanvasWidget::nodeResizeCommitted, this,
+          &MainWindow::handleCanvasNodeResizeCommitted);
 
   hierarchyTree_ = new QTreeWidget(this);
   hierarchyTree_->setHeaderLabels({"Node", "Type"});
@@ -1032,6 +1196,40 @@ void MainWindow::handleCanvasNodeDragCommitted(const QString& nodeId, double x, 
   applyNodeEdits();
 }
 
+void MainWindow::handleCanvasNodeResizePreview(const QString& nodeId, double x, double y,
+                                               double width, double height) {
+  if (nodeId != scene_.selectedNodeId) {
+    return;
+  }
+
+  suppressInspectorSignals_ = true;
+  xSpin_->setValue(x);
+  ySpin_->setValue(y);
+  suppressInspectorSignals_ = false;
+  statusBar()->showMessage(
+      QString("Resizing %1 to %2 x %3")
+          .arg(nodeIndex_.value(nodeId).name)
+          .arg(width, 0, 'f', 2)
+          .arg(height, 0, 'f', 2));
+}
+
+void MainWindow::handleCanvasNodeResizeCommitted(const QString& nodeId, double x, double y,
+                                                 double width, double height) {
+  if (nodeId != scene_.selectedNodeId) {
+    return;
+  }
+
+  if (!resizeNodeToBounds(nodeId, x, y, width, height)) {
+    statusBar()->showMessage(QString("Failed to resize node %1").arg(nodeId), 3000);
+    return;
+  }
+
+  refreshUiAfterSceneLoad(QString("Resized %1 to %2 x %3")
+                              .arg(nodeIndex_.value(nodeId).name)
+                              .arg(width, 0, 'f', 2)
+                              .arg(height, 0, 'f', 2));
+}
+
 void MainWindow::updateInspector(const SceneNodeData& node) {
   populateInspectorFields(node);
   QStringList sections;
@@ -1174,6 +1372,41 @@ bool MainWindow::nudgeSelectedNode(double deltaX, double deltaY) {
                               .arg(nextX, 0, 'f', 2)
                               .arg(nextY, 0, 'f', 2));
   return true;
+}
+
+bool MainWindow::resizeNodeToBounds(const QString& nodeId, double x, double y, double width,
+                                    double height) {
+  if (!nodeIndex_.contains(nodeId)) {
+    return false;
+  }
+
+  SceneNodeData node = nodeIndex_.value(nodeId);
+  QJsonObject params = node.params;
+  const double clampedWidth = std::max(kMinResizeExtent, width);
+  const double clampedHeight = std::max(kMinResizeExtent, height);
+
+  if (node.type == "Rectangle") {
+    params.insert("width", clampedWidth);
+    params.insert("height", clampedHeight);
+  } else if (node.type == "Ellipse") {
+    params.insert("radiusX", clampedWidth * 0.5);
+    params.insert("radiusY", clampedHeight * 0.5);
+  } else if (node.type == "ImageLayer") {
+    params.insert("displayWidth", clampedWidth);
+    params.insert("displayHeight", clampedHeight);
+  } else {
+    return false;
+  }
+
+  const QString paramsJson = objectToPrettyJson(params);
+  const QString styleJson = objectToPrettyJson(node.style);
+
+  suppressInspectorSignals_ = true;
+  xSpin_->setValue(x);
+  ySpin_->setValue(y);
+  suppressInspectorSignals_ = false;
+
+  return applyNodePropertyEdits(nodeId, node.name, x, y, paramsJson, styleJson);
 }
 
 bool MainWindow::inspectorJsonIsValid(QString* errorMessage) const {
