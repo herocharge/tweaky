@@ -16,6 +16,13 @@ fn run() -> Result<(), String> {
     let options = CliOptions::parse(std::env::args())?;
     let app = EditorApp::open_path(&options.scene_path).map_err(|error| error.to_string())?;
 
+    if options.dump_view_model {
+        let json = serde_json::to_string_pretty(&app.view_model())
+            .map_err(|error| format!("failed to serialize view model: {error}"))?;
+        println!("{json}");
+        return Ok(());
+    }
+
     if options.qt_shell_requested {
         println!("{}", qt_shell::launch_unavailable_message());
     }

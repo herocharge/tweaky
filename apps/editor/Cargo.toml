@@ -9,6 +9,7 @@ skia-safe-backend = ["renderer/skia-safe-backend"]
 qt-shell = []
 
 [dependencies]
+serde.workspace = true
 serde_json.workspace = true
 scene_schema = { path = "../../crates/scene_schema" }
 scene_runtime = { path = "../../crates/scene_runtime" }

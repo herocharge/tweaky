@@ -43,6 +43,7 @@ Useful renderer commands:
 Useful editor commands:
 
 - `cargo run -p editor -- examples/basic_poster.vsd.json --export /tmp/tweaky-editor-smoke.png`
+- `cargo run -p editor -- examples/basic_poster.vsd.json --dump-view-model`
 - `cmake -S apps/editor/qt_shell -B build/qt_shell -DCMAKE_PREFIX_PATH=$(brew --prefix qt)`
 - `cmake --build build/qt_shell`
 - `./build/qt_shell/tweaky-editor-qt examples/basic_poster.vsd.json`
@@ -68,4 +69,4 @@ Current project phase:
 
 - Milestone 1 complete
 - Milestone 2 functionally complete for the current MVP scope
-- Milestone 3 started with a real editor app scaffold and compiled Qt shell prototype
+- Milestone 3 active with a real editor app scaffold, a compiled Qt shell prototype, and a Rust-owned view-model boundary for hierarchy, inspector, and canvas preview data

@@ -2,9 +2,10 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use renderer::RenderPlan;
-use scene_runtime::{ComponentRegistry, RuntimeDocument};
+use renderer::{RenderItem, RenderKind, RenderPlan};
+use scene_runtime::{ComponentRegistry, Point, Rect, RuntimeDocument};
 use scene_schema::{SceneFile, parse_scene_str};
+use serde::Serialize;
 
 pub struct EditorApp {
     pub state: EditorState,
@@ -84,6 +85,57 @@ impl EditorApp {
             Err(EditorError::ExportUnavailable)
         }
     }
+
+    pub fn view_model(&self) -> EditorViewModel {
+        let hierarchy_by_id = self
+            .state
+            .hierarchy
+            .iter()
+            .map(|entry| (entry.node_id.as_str(), entry))
+            .collect::<std::collections::HashMap<_, _>>();
+        let selected_node_id = self.state.selected_node_id.clone();
+        let nodes = self
+            .state
+            .hierarchy
+            .iter()
+            .filter_map(|entry| self.state.runtime.find_node(&entry.node_id))
+            .map(|node| EditorNodeViewModel {
+                depth: hierarchy_by_id
+                    .get(node.id.as_str())
+                    .map(|entry| entry.depth)
+                    .unwrap_or(0),
+                id: node.id.clone(),
+                node_type: format!("{:?}", node.node_type),
+                name: node.name.clone(),
+                params: serde_json::Value::Object(node.params.clone()),
+                style: serde_json::Value::Object(node.style.clone()),
+                bounds: self
+                    .state
+                    .runtime
+                    .node_bounds(&node.id)
+                    .map(EditorRectViewModel::from),
+            })
+            .collect();
+        let render_items = self
+            .state
+            .render_plan
+            .items
+            .iter()
+            .map(EditorCanvasItemViewModel::from_render_item)
+            .collect();
+
+        EditorViewModel {
+            document_path: self.state.document_path.to_string_lossy().to_string(),
+            document_name: self.state.runtime.scene().document.name.clone(),
+            canvas_width: self.state.runtime.scene().document.width,
+            canvas_height: self.state.runtime.scene().document.height,
+            background: self.state.runtime.scene().document.background.color.clone(),
+            render_item_count: self.state.render_plan.items.len(),
+            selected_node_id,
+            nodes,
+            render_items,
+        }
+    }
 }
 
 pub struct EditorState {
@@ -115,6 +167,208 @@ pub struct SelectedNodeSummary {
     pub id: String,
     pub node_type: String,
     pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EditorViewModel {
+    pub document_path: String,
+    pub document_name: String,
+    pub canvas_width: f64,
+    pub canvas_height: f64,
+    pub background: String,
+    pub render_item_count: usize,
+    pub selected_node_id: Option<String>,
+    pub nodes: Vec<EditorNodeViewModel>,
+    pub render_items: Vec<EditorCanvasItemViewModel>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EditorNodeViewModel {
+    pub depth: usize,
+    pub id: String,
+    pub node_type: String,
+    pub name: String,
+    pub params: serde_json::Value,
+    pub style: serde_json::Value,
+    pub bounds: Option<EditorRectViewModel>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EditorCanvasItemViewModel {
+    pub node_id: String,
+    pub kind: String,
+    pub opacity: f64,
+    pub blend_mode: String,
+    pub bounds: Option<EditorRectViewModel>,
+    pub fill: Option<String>,
+    pub corner_radius: Option<f64>,
+    pub origin: Option<EditorPointViewModel>,
+    pub points: Vec<EditorPointViewModel>,
+    pub closed: Option<bool>,
+    pub text: Option<String>,
+    pub font_size: Option<f64>,
+    pub font_family: Option<String>,
+    pub image_ref: Option<String>,
+    pub blur_radius: Option<f64>,
+    pub shadow: Option<EditorShadowViewModel>,
+}
+
+impl EditorCanvasItemViewModel {
+    fn from_render_item(item: &RenderItem) -> Self {
+        let (
+            kind,
+            fill,
+            corner_radius,
+            origin,
+            points,
+            closed,
+            text,
+            font_size,
+            font_family,
+            image_ref,
+        ) = match &item.kind {
+            RenderKind::Rectangle(rectangle) => (
+                "Rectangle".to_string(),
+                rectangle.fill.clone(),
+                Some(rectangle.corner_radius),
+                None,
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            RenderKind::Ellipse(ellipse) => (
+                "Ellipse".to_string(),
+                ellipse.fill.clone(),
+                None,
+                None,
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            RenderKind::Path(path) => (
+                "Path".to_string(),
+                path.fill.clone(),
+                None,
+                None,
+                path.points
+                    .iter()
+                    .copied()
+                    .map(EditorPointViewModel::from)
+                    .collect(),
+                Some(path.closed),
+                None,
+                None,
+                None,
+                None,
+            ),
+            RenderKind::Text(text_item) => (
+                "Text".to_string(),
+                text_item.fill.clone(),
+                None,
+                Some(EditorPointViewModel::from(text_item.origin)),
+                Vec::new(),
+                None,
+                Some(text_item.text.clone()),
+                Some(text_item.font_size),
+                text_item.font_family.clone(),
+                None,
+            ),
+            RenderKind::ImageLayer(image) => (
+                "ImageLayer".to_string(),
+                None,
+                None,
+                None,
+                Vec::new(),
+                None,
+                None,
+                None,
+                None,
+                image.image_ref.clone(),
+            ),
+        };
+
+        Self {
+            node_id: item.node_id.clone(),
+            kind,
+            opacity: item.opacity,
+            blend_mode: format!("{:?}", item.blend_mode),
+            bounds: item.bounds.map(EditorRectViewModel::from),
+            fill,
+            corner_radius,
+            origin,
+            points,
+            closed,
+            text,
+            font_size,
+            font_family,
+            image_ref,
+            blur_radius: item.effects.blur_radius,
+            shadow: item
+                .effects
+                .shadow
+                .as_ref()
+                .map(EditorShadowViewModel::from),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct EditorRectViewModel {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl From<Rect> for EditorRectViewModel {
+    fn from(value: Rect) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+            width: value.width,
+            height: value.height,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct EditorPointViewModel {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl From<Point> for EditorPointViewModel {
+    fn from(value: Point) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EditorShadowViewModel {
+    pub color: String,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub blur_radius: f64,
+}
+
+impl From<&renderer::RenderShadow> for EditorShadowViewModel {
+    fn from(value: &renderer::RenderShadow) -> Self {
+        Self {
+            color: value.color.clone(),
+            offset_x: value.offset_x,
+            offset_y: value.offset_y,
+            blur_radius: value.blur_radius,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -200,6 +454,20 @@ mod tests {
     }
 
     #[test]
+    fn builds_view_model_with_render_items() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
+        let app = EditorApp::from_scene(PathBuf::from("basic_poster.vsd.json"), scene)
+            .expect("editor app should initialize");
+        let view_model = app.view_model();
+
+        assert_eq!(view_model.document_name, "Basic Poster");
+        assert_eq!(view_model.nodes.len(), 3);
+        assert_eq!(view_model.render_items.len(), 2);
+        assert_eq!(view_model.render_items[0].kind, "Rectangle");
+        assert_eq!(view_model.render_items[1].kind, "Text");
+    }
+
+    #[test]
     fn exposes_summary() {
         let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
         let app = EditorApp::from_scene(PathBuf::from("basic_poster.vsd.json"), scene)
@@ -213,5 +481,17 @@ mod tests {
         assert_eq!(summary.document_name, "Basic Poster");
         assert_eq!(summary.render_item_count, 2);
         assert!(summary.selected.is_some());
+    }
+
+    #[test]
+    fn exposes_view_model() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
+        let app = EditorApp::from_scene(PathBuf::from("basic_poster.vsd.json"), scene)
+            .expect("editor app should initialize");
+        let view_model = app.view_model();
+
+        assert_eq!(view_model.document_name, "Basic Poster");
+        assert_eq!(view_model.nodes.len(), 3);
+        assert_eq!(view_model.selected_node_id.as_deref(), Some("root"));
     }
 }

@@ -101,7 +101,8 @@ Currently implemented:
 - Closed `Path` nodes now participate in polygon-aware hit testing instead of only bounding-box selection
 - Style-level `blur` and `shadow` effects now affect bounds and Skia rendering
 - `editor` now has a real app-state scaffold, CLI loading path, hierarchy summary, and PNG export workflow
-- `apps/editor/qt_shell` now provides a compiled Qt Widgets shell prototype with hierarchy, inspector, and canvas placeholder panes
+- `editor` now emits a serialized view-model for the Qt shell, including hierarchy, node bounds, and render item data
+- `apps/editor/qt_shell` now provides a compiled Qt Widgets shell prototype with hierarchy, inspector, and a Rust-fed canvas preview with raw-JSON fallback loading
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
@@ -112,10 +113,10 @@ Currently implemented:
 
 Expected next implementation step:
 
-- Choose the first Qt integration shape for hierarchy, canvas host, and inspector surfaces
-- Add the first canvas-host abstraction and document-open workflow boundaries that a future Qt shell can call into
-- Reduce duplicated scene-loading logic between the Rust editor app and the Qt shell prototype
-- Keep renderer/runtime boundaries stable while the desktop shell comes online
+- Add menu/document actions to the Qt shell
+- Introduce editor-side mutation flows so the hierarchy, inspector, and canvas can stop being read-only
+- Preserve the Rust-owned view-model boundary as the source of truth for UI data
+- Keep renderer/runtime boundaries stable while the desktop shell becomes interactive
 
 ## Intended Repo Shape
 
@@ -184,6 +185,7 @@ When code exists, verification should usually include the following where releva
 - Confirm formatter/linter status if configured
 - Confirm the editor still loads example scenes
 - If touching Skia integration, run `cargo test -p renderer --features skia-safe-backend`
+- If touching the Qt shell boundary, rebuild `build/qt_shell` and smoke-launch `tweaky-editor-qt`
 
 For documentation-only changes:
 
@@ -202,9 +204,9 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Define the first canvas host boundary between the desktop shell and renderer
-2. Add hierarchy and inspector-facing view-model slices to the editor app layer
-3. Reduce duplicated scene-loading logic between the Rust editor app and the Qt prototype
+1. Add menu/document actions to the Qt shell
+2. Introduce selection and property editing commands across the Rust editor app boundary
+3. Add save/export actions that flow through the Rust app layer
 4. Preserve the current CLI/editor app workflow as a smoke-test path
 5. Commit and push each slice separately
 

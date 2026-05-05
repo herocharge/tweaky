@@ -3,6 +3,7 @@ use std::path::PathBuf;
 pub struct CliOptions {
     pub scene_path: PathBuf,
     pub export_path: Option<PathBuf>,
+    pub dump_view_model: bool,
     pub qt_shell_requested: bool,
 }
 
@@ -13,6 +14,7 @@ impl CliOptions {
 
         let mut scene_path = PathBuf::from("examples/basic_poster.vsd.json");
         let mut export_path = None;
+        let mut dump_view_model = false;
         let mut qt_shell_requested = false;
 
         while let Some(arg) = args.next() {
@@ -25,6 +27,9 @@ impl CliOptions {
                 }
                 "--qt" => {
                     qt_shell_requested = true;
+                }
+                "--dump-view-model" => {
+                    dump_view_model = true;
                 }
                 "--help" | "-h" => {
                     return Err(Self::usage());
@@ -41,6 +46,7 @@ impl CliOptions {
         Ok(Self {
             scene_path,
             export_path,
+            dump_view_model,
             qt_shell_requested,
         })
     }
@@ -48,10 +54,13 @@ impl CliOptions {
     pub fn usage() -> String {
         [
             "Usage:",
-            "  cargo run -p editor -- [scene-path] [--export output.png] [--qt]",
+            "  cargo run -p editor -- [scene-path] [--export output.png] [--dump-view-model] [--qt]",
             "",
             "Defaults:",
             "  scene-path = examples/basic_poster.vsd.json",
+            "",
+            "Notes:",
+            "  --dump-view-model prints the editor-facing JSON payload used by the Qt shell",
         ]
         .join("\n")
     }
@@ -92,6 +101,16 @@ mod tests {
                 .to_string_lossy(),
             "out.png"
         );
+        assert!(!options.dump_view_model);
         assert!(options.qt_shell_requested);
+    }
+
+    #[test]
+    fn parses_dump_view_model_flag() {
+        let options =
+            CliOptions::parse(vec!["editor".to_string(), "--dump-view-model".to_string()])
+                .expect("parse should work");
+
+        assert!(options.dump_view_model);
     }
 }

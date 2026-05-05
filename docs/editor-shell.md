@@ -11,7 +11,7 @@ Introduce a real application layer while preserving a clean separation between d
 The editor app is currently split into:
 
 - `app.rs`: editor state, document loading, hierarchy building, summary generation, export workflow
-- `cli.rs`: lightweight command-line entry flow for smoke testing
+- `cli.rs`: lightweight command-line entry flow for smoke testing and view-model dumping
 - `qt_shell.rs`: placeholder integration boundary for the future desktop shell
 - `main.rs`: top-level orchestration
 - `apps/editor/qt_shell`: Qt Widgets shell prototype
@@ -23,6 +23,7 @@ Rather than tie core editor logic directly to one UI layer, the project now has:
 - a real editor state model
 - a real document-open workflow
 - a real render/export workflow
+- a serializable Rust-owned view model for hierarchy, inspector, node bounds, and canvas render items
 - a compiled Qt Widgets shell prototype
 - a clean future insertion point for a stronger Rust/Qt bridge
 
@@ -41,18 +42,20 @@ Recommended responsibility split:
 
 - Rust app state remains the source of truth
 - Qt owns window chrome and widget composition
-- the canvas host bridges into renderer output
+- the Qt shell should consume Rust-produced UI data instead of independently re-deriving scene semantics
+- the canvas host can start with Rust-produced preview primitives before later moving closer to live renderer hosting
 
 Current prototype status:
 
 - Implemented as a Qt Widgets app under `apps/editor/qt_shell`
-- Loads `.vsd.json` scene data directly
-- Displays hierarchy, inspector, and canvas placeholder panes
+- First tries to load a Rust-produced JSON view model via `editor --dump-view-model`
+- Falls back to raw `.vsd.json` loading if the Rust CLI is unavailable
+- Displays hierarchy, inspector, and a simple canvas preview driven by Rust-fed render items
 - Compiles successfully against local Qt 6
 
 ## Short-Term Next Steps
 
 1. Keep the editor state model stable as the shell evolves
-2. Introduce a first canvas-host abstraction
-3. Reduce duplicated scene-loading logic between the Qt shell and the Rust editor app
-4. Add hierarchy and inspector view-model slices that both shells can reuse
+2. Add menu/document actions for open, save, and export
+3. Introduce editable selection and property mutation flows through the Rust app layer
+4. Replace more fallback-only Qt logic with Rust-owned view/state data over time
