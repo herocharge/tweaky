@@ -359,6 +359,7 @@ Current status:
 - selected nodes can now be nudged with arrow keys, with `Shift` for larger moves, which improves the transform-edit loop without adding resize complexity yet
 - selected `Rectangle`, `Ellipse`, and `ImageLayer` nodes now support corner-handle resizing on the canvas, giving Milestone 3 its first direct geometry-edit affordance
 - editor edits now have lightweight undo/redo history, and `Text` nodes have a dedicated edit path through double-click content editing and keyboard font-size adjustments
+- selected `Path` nodes now support direct point manipulation on the canvas, and text editing has expanded to include line-height stepping for multiline layout tuning
 - Remaining milestone work is primarily interactivity and document lifecycle, not shell bootstrap
 
 ## Milestone 4: AI Integration

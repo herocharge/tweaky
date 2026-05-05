@@ -35,6 +35,7 @@ namespace {
 
 constexpr qreal kSelectionPadding = 6.0;
 constexpr qreal kHandleSize = 8.0;
+constexpr qreal kPathPointHandleSize = 10.0;
 constexpr double kMinResizeExtent = 8.0;
 
 QList<QPointF> resizeHandleCenters(const QRectF& outlineRect) {
@@ -99,6 +100,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
 
   const QPointF dragOffset = activeDragWidgetOffset();
   const SceneRectData resizeSceneRect = activeResizeSceneRect();
+  const QList<ScenePointData> pathScenePoints = activePathScenePoints();
 
   for (const auto& item : scene_.renderItems) {
     const QColor fill = item.fill.isValid() ? item.fill : QColor("#c8bfb1");
@@ -310,6 +312,16 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     }
   }
 
+  if (selectedNode_.type == "Path" && !pathScenePoints.isEmpty()) {
+    painter.setOpacity(1.0);
+    painter.setPen(QPen(QColor("#1d6fd6"), 1.5));
+    painter.setBrush(QColor("#f5fbff"));
+    for (const auto& point : pathScenePoints) {
+      const QPointF mapped = mapScenePoint(point, canvasRect);
+      painter.drawEllipse(mapped, kPathPointHandleSize * 0.5, kPathPointHandleSize * 0.5);
+    }
+  }
+
   painter.setOpacity(1.0);
 }
 
@@ -402,6 +414,17 @@ SceneRectData CanvasWidget::activeResizeSceneRect() const {
   };
 }
 
+QList<ScenePointData> CanvasWidget::activePathScenePoints() const {
+  QList<ScenePointData> points = selectedPathScenePoints();
+  if (!pathPointDragActive_ || pathPointDragIndex_ < 0 || pathPointDragIndex_ >= points.size()) {
+    return points;
+  }
+
+  const QPointF scenePoint = scenePositionForWidgetPoint(pathPointCurrentWidgetPos_);
+  points[pathPointDragIndex_] = ScenePointData{scenePoint.x(), scenePoint.y()};
+  return points;
+}
+
 QPointF CanvasWidget::scenePositionForWidgetPoint(const QPointF& widgetPoint) const {
   const QRectF canvasRect = canvasRectForWidget();
   if (scene_.width <= 0.0 || scene_.height <= 0.0) {
@@ -464,9 +487,49 @@ ResizeHandle CanvasWidget::resizeHandleAt(const QPointF& widgetPoint, const QRec
   return ResizeHandle::None;
 }
 
+QList<ScenePointData> CanvasWidget::selectedPathScenePoints() const {
+  if (selectedNode_.type != "Path") {
+    return {};
+  }
+
+  for (const auto& item : scene_.renderItems) {
+    if (item.nodeId == selectedNode_.id && item.kind == "Path") {
+      return item.points;
+    }
+  }
+
+  return {};
+}
+
+int CanvasWidget::pathPointHandleAt(const QPointF& widgetPoint, const QRectF& canvasRect) const {
+  const QList<ScenePointData> points = selectedPathScenePoints();
+  for (qsizetype index = 0; index < points.size(); ++index) {
+    const QPointF mapped = mapScenePoint(points.at(index), canvasRect);
+    const QRectF handleRect(mapped.x() - kPathPointHandleSize * 0.5,
+                            mapped.y() - kPathPointHandleSize * 0.5,
+                            kPathPointHandleSize, kPathPointHandleSize);
+    if (handleRect.contains(widgetPoint)) {
+      return static_cast<int>(index);
+    }
+  }
+
+  return -1;
+}
+
 void CanvasWidget::mousePressEvent(QMouseEvent* event) {
   if (event->button() == Qt::LeftButton) {
     const QRectF canvasRect = canvasRectForWidget();
+    const int pathPointIndex = pathPointHandleAt(event->position(), canvasRect);
+    if (pathPointIndex >= 0) {
+      pathPointDragActive_ = true;
+      pathPointDragNodeId_ = selectedNode_.id;
+      pathPointDragIndex_ = pathPointIndex;
+      pathPointCurrentWidgetPos_ = event->position();
+      update();
+      event->accept();
+      return;
+    }
+
     const ResizeHandle handle = resizeHandleAt(event->position(), canvasRect);
     if (handle != ResizeHandle::None) {
       resizeActive_ = true;
@@ -519,6 +582,16 @@ void CanvasWidget::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
+  if (pathPointDragActive_) {
+    pathPointCurrentWidgetPos_ = event->position();
+    const QPointF scenePoint = scenePositionForWidgetPoint(pathPointCurrentWidgetPos_);
+    emit nodePathPointPreview(pathPointDragNodeId_, pathPointDragIndex_, scenePoint.x(),
+                              scenePoint.y());
+    update();
+    event->accept();
+    return;
+  }
+
   if (resizeActive_) {
     resizeCurrentWidgetPos_ = event->position();
     const SceneRectData nextRect = activeResizeSceneRect();
@@ -544,6 +617,19 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
+  if (pathPointDragActive_ && event->button() == Qt::LeftButton) {
+    pathPointCurrentWidgetPos_ = event->position();
+    const QPointF scenePoint = scenePositionForWidgetPoint(pathPointCurrentWidgetPos_);
+    emit nodePathPointCommitted(pathPointDragNodeId_, pathPointDragIndex_, scenePoint.x(),
+                                scenePoint.y());
+    pathPointDragActive_ = false;
+    pathPointDragNodeId_.clear();
+    pathPointDragIndex_ = -1;
+    update();
+    event->accept();
+    return;
+  }
+
   if (resizeActive_ && event->button() == Qt::LeftButton) {
     resizeCurrentWidgetPos_ = event->position();
     const SceneRectData nextRect = activeResizeSceneRect();
@@ -576,7 +662,7 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 QString CanvasWidget::pickNodeAt(const QPointF& widgetPoint) const {
-  if (resizeActive_) {
+  if (resizeActive_ || pathPointDragActive_) {
     return QString();
   }
 
@@ -630,6 +716,7 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
   }
 
   const double step = event->modifiers().testFlag(Qt::ShiftModifier) ? 10.0 : 1.0;
+  const bool lineHeightMode = event->modifiers().testFlag(Qt::AltModifier);
   bool handled = false;
 
   switch (event->key()) {
@@ -640,10 +727,12 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
       handled = nudgeSelectedNode(step, 0.0);
       break;
     case Qt::Key_Up:
-      handled = nudgeSelectedNode(0.0, -step);
+      handled = lineHeightMode ? adjustSelectedTextLineHeight(-0.1)
+                               : nudgeSelectedNode(0.0, -step);
       break;
     case Qt::Key_Down:
-      handled = nudgeSelectedNode(0.0, step);
+      handled = lineHeightMode ? adjustSelectedTextLineHeight(0.1)
+                               : nudgeSelectedNode(0.0, step);
       break;
     case Qt::Key_BracketLeft:
     case Qt::Key_Minus:
@@ -693,6 +782,10 @@ void MainWindow::buildUi() {
   connect(canvas_, &CanvasWidget::nodeDragPreview, this, &MainWindow::handleCanvasNodeDragPreview);
   connect(canvas_, &CanvasWidget::nodeDragCommitted, this,
           &MainWindow::handleCanvasNodeDragCommitted);
+  connect(canvas_, &CanvasWidget::nodePathPointPreview, this,
+          &MainWindow::handleCanvasNodePathPointPreview);
+  connect(canvas_, &CanvasWidget::nodePathPointCommitted, this,
+          &MainWindow::handleCanvasNodePathPointCommitted);
   connect(canvas_, &CanvasWidget::nodeResizePreview, this,
           &MainWindow::handleCanvasNodeResizePreview);
   connect(canvas_, &CanvasWidget::nodeResizeCommitted, this,
@@ -1276,6 +1369,37 @@ void MainWindow::handleCanvasNodeDragCommitted(const QString& nodeId, double x, 
   applyNodeEdits();
 }
 
+void MainWindow::handleCanvasNodePathPointPreview(const QString& nodeId, int pointIndex, double x,
+                                                  double y) {
+  if (nodeId != scene_.selectedNodeId || !nodeIndex_.contains(nodeId)) {
+    return;
+  }
+
+  statusBar()->showMessage(
+      QString("Moving point %1 of %2 to (%3, %4)")
+          .arg(pointIndex + 1)
+          .arg(nodeIndex_.value(nodeId).name)
+          .arg(x, 0, 'f', 2)
+          .arg(y, 0, 'f', 2));
+}
+
+void MainWindow::handleCanvasNodePathPointCommitted(const QString& nodeId, int pointIndex,
+                                                    double x, double y) {
+  if (nodeId != scene_.selectedNodeId || !nodeIndex_.contains(nodeId)) {
+    return;
+  }
+
+  if (!updatePathNodePoint(nodeId, pointIndex, x, y)) {
+    statusBar()->showMessage(QString("Failed to move point on %1").arg(nodeIndex_.value(nodeId).name),
+                             3000);
+    return;
+  }
+
+  refreshUiAfterSceneLoad(QString("Moved point %1 on %2")
+                              .arg(pointIndex + 1)
+                              .arg(nodeIndex_.value(nodeId).name));
+}
+
 void MainWindow::handleCanvasNodeResizePreview(const QString& nodeId, double x, double y,
                                                double width, double height) {
   if (nodeId != scene_.selectedNodeId) {
@@ -1594,6 +1718,26 @@ bool MainWindow::adjustSelectedTextFontSize(double delta) {
                                   .arg(nextSize, 0, 'f', 1));
 }
 
+bool MainWindow::adjustSelectedTextLineHeight(double delta) {
+  if (scene_.selectedNodeId.isEmpty() || !nodeIndex_.contains(scene_.selectedNodeId)) {
+    return false;
+  }
+
+  const SceneNodeData node = nodeIndex_.value(scene_.selectedNodeId);
+  if (node.type != "Text") {
+    return false;
+  }
+
+  QJsonObject params = node.params;
+  const double currentLineHeight = params.value("lineHeight").toDouble(1.2);
+  const double nextLineHeight = std::max(0.6, currentLineHeight + delta);
+  params.insert("lineHeight", nextLineHeight);
+  return updateTextNodeParams(scene_.selectedNodeId, params,
+                              QString("Adjusted %1 line height to %2")
+                                  .arg(node.name)
+                                  .arg(nextLineHeight, 0, 'f', 2));
+}
+
 bool MainWindow::updateTextNodeParams(const QString& nodeId, const QJsonObject& params,
                                       const QString& actionLabel) {
   if (!nodeIndex_.contains(nodeId)) {
@@ -1611,6 +1755,37 @@ bool MainWindow::updateTextNodeParams(const QString& nodeId, const QJsonObject& 
 
   refreshUiAfterSceneLoad(actionLabel);
   return true;
+}
+
+bool MainWindow::updatePathNodePoint(const QString& nodeId, int pointIndex, double sceneX,
+                                     double sceneY) {
+  if (!nodeIndex_.contains(nodeId)) {
+    return false;
+  }
+
+  const SceneNodeData node = nodeIndex_.value(nodeId);
+  if (node.type != "Path") {
+    return false;
+  }
+
+  QJsonObject params = node.params;
+  QJsonArray points = params.value("points").toArray();
+  if (pointIndex < 0 || pointIndex >= points.size()) {
+    return false;
+  }
+
+  const double localX = sceneX - node.positionX;
+  const double localY = sceneY - node.positionY;
+  QJsonObject point = points.at(pointIndex).toObject();
+  point.insert("x", localX);
+  point.insert("y", localY);
+  points[pointIndex] = point;
+  params.insert("points", points);
+
+  const QString paramsJson = objectToPrettyJson(params);
+  const QString styleJson = objectToPrettyJson(node.style);
+  return applyNodePropertyEdits(nodeId, node.name, node.positionX, node.positionY, paramsJson,
+                                styleJson);
 }
 
 bool MainWindow::resizeNodeToBounds(const QString& nodeId, double x, double y, double width,

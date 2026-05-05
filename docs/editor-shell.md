@@ -60,11 +60,13 @@ Current prototype status:
 - Supports arrow-key nudging for selected nodes, with larger `Shift` steps, while leaving text-entry fields alone
 - Supports corner-handle resizing for `Rectangle`, `Ellipse`, and `ImageLayer` nodes by converting resized bounds back into node params through the Rust editor CLI
 - Supports first text-specific affordances: double-click a text node to edit its content, and use `[` / `]` or `-` / `+` to step font size for the selected text node
+- Supports direct point editing for selected `Path` nodes via draggable canvas handles; this first pass assumes translation-first path editing rather than full inverse-transform vector editing
+- Supports text line-height stepping with `Alt+Up` / `Alt+Down` for quicker multiline layout adjustment
 - Compiles successfully against local Qt 6
 
 ## Short-Term Next Steps
 
 1. Keep the editor state model stable as the shell evolves
 2. Add more editable properties through the Rust app layer beyond name/position/raw-json
-3. Extend direct canvas editing beyond simple bound-based nodes, especially path-oriented manipulation and richer text layout controls
+3. Make path editing more transform-aware and add richer text layout controls like alignment and box-based text wrapping
 4. Replace more fallback-only Qt logic with Rust-owned view/state data over time

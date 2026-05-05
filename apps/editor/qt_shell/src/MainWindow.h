@@ -107,6 +107,8 @@ signals:
   void nodeTextEditRequested(const QString& nodeId);
   void nodeDragPreview(double x, double y);
   void nodeDragCommitted(const QString& nodeId, double x, double y);
+  void nodePathPointPreview(const QString& nodeId, int pointIndex, double x, double y);
+  void nodePathPointCommitted(const QString& nodeId, int pointIndex, double x, double y);
   void nodeResizePreview(const QString& nodeId, double x, double y, double width, double height);
   void nodeResizeCommitted(const QString& nodeId, double x, double y, double width, double height);
 
@@ -123,11 +125,14 @@ private:
   QRectF mapSceneRect(const SceneRectData& rect, const QRectF& canvasRect) const;
   QPointF activeDragWidgetOffset() const;
   SceneRectData activeResizeSceneRect() const;
+  QList<ScenePointData> activePathScenePoints() const;
   QPointF scenePositionForWidgetPoint(const QPointF& widgetPoint) const;
   QString pickNodeAt(const QPointF& widgetPoint) const;
   bool selectedNodeSupportsResize() const;
   QRectF selectedOutlineRect(const QRectF& canvasRect) const;
   ResizeHandle resizeHandleAt(const QPointF& widgetPoint, const QRectF& canvasRect) const;
+  QList<ScenePointData> selectedPathScenePoints() const;
+  int pathPointHandleAt(const QPointF& widgetPoint, const QRectF& canvasRect) const;
   SceneDocumentData scene_;
   SceneNodeData selectedNode_;
   bool dragActive_ = false;
@@ -141,6 +146,10 @@ private:
   QString resizeNodeId_;
   QPointF resizeCurrentWidgetPos_;
   SceneRectData resizeStartSceneRect_;
+  bool pathPointDragActive_ = false;
+  QString pathPointDragNodeId_;
+  int pathPointDragIndex_ = -1;
+  QPointF pathPointCurrentWidgetPos_;
 };
 
 class MainWindow : public QMainWindow {
@@ -160,6 +169,8 @@ private slots:
   void handleCanvasNodePicked(const QString& nodeId);
   void handleCanvasNodeDragPreview(double x, double y);
   void handleCanvasNodeDragCommitted(const QString& nodeId, double x, double y);
+  void handleCanvasNodePathPointPreview(const QString& nodeId, int pointIndex, double x, double y);
+  void handleCanvasNodePathPointCommitted(const QString& nodeId, int pointIndex, double x, double y);
   void handleCanvasNodeResizePreview(const QString& nodeId, double x, double y,
                                      double width, double height);
   void handleCanvasNodeResizeCommitted(const QString& nodeId, double x, double y,
@@ -195,7 +206,9 @@ private:
   void redoLastEdit();
   bool nudgeSelectedNode(double deltaX, double deltaY);
   bool adjustSelectedTextFontSize(double delta);
+  bool adjustSelectedTextLineHeight(double delta);
   bool updateTextNodeParams(const QString& nodeId, const QJsonObject& params, const QString& actionLabel);
+  bool updatePathNodePoint(const QString& nodeId, int pointIndex, double sceneX, double sceneY);
   bool resizeNodeToBounds(const QString& nodeId, double x, double y, double width, double height);
   bool exportSceneToPng(const QString& outputPath);
   bool applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x, double y,
