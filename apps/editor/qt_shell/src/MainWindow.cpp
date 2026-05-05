@@ -78,16 +78,54 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     stroke.setAlphaF(0.9);
     painter.setOpacity(item.opacity);
 
+    auto shadowOffsetForItem = [&](const SceneCanvasItemData& shadowItem) -> QPointF {
+      if (!shadowItem.hasShadow) {
+        return QPointF(0.0, 0.0);
+      }
+      const QPointF base = mapScenePoint(ScenePointData{0.0, 0.0}, canvasRect);
+      const QPointF offset = mapScenePoint(
+          ScenePointData{shadowItem.shadow.offsetX, shadowItem.shadow.offsetY}, canvasRect);
+      return offset - base;
+    };
+
     if (item.kind == "Rectangle" && item.hasBounds) {
+      if (item.hasShadow) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(item.shadow.color);
+        painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect).translated(
+                                    shadowOffsetForItem(item)),
+                                item.cornerRadius, item.cornerRadius);
+      }
       painter.setPen(QPen(stroke, 1.5));
       painter.setBrush(fill);
       painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
                               item.cornerRadius);
     } else if (item.kind == "Ellipse" && item.hasBounds) {
+      if (item.hasShadow) {
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(item.shadow.color);
+        painter.drawEllipse(mapSceneRect(item.bounds, canvasRect).translated(
+            shadowOffsetForItem(item)));
+      }
       painter.setPen(QPen(stroke, 1.5));
       painter.setBrush(fill);
       painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
     } else if (item.kind == "Path" && !item.points.isEmpty()) {
+      if (item.hasShadow) {
+        QPainterPath shadowPath;
+        const QPointF offset = shadowOffsetForItem(item);
+        shadowPath.moveTo(mapScenePoint(item.points.first(), canvasRect) + offset);
+        for (qsizetype index = 1; index < item.points.size(); ++index) {
+          shadowPath.lineTo(mapScenePoint(item.points.at(index), canvasRect) + offset);
+        }
+        if (item.closed) {
+          shadowPath.closeSubpath();
+        }
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(item.shadow.color);
+        painter.drawPath(shadowPath);
+      }
+
       QPainterPath path;
       path.moveTo(mapScenePoint(item.points.first(), canvasRect));
       for (qsizetype index = 1; index < item.points.size(); ++index) {
@@ -106,6 +144,11 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         textFont.setFamily(item.fontFamily);
       }
       painter.setFont(textFont);
+      if (item.hasShadow) {
+        painter.setPen(item.shadow.color);
+        painter.drawText(mapScenePoint(item.origin, canvasRect) + shadowOffsetForItem(item),
+                         item.text);
+      }
       painter.setPen(fill);
       painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
     } else if (item.kind == "ImageLayer" && item.hasBounds) {
