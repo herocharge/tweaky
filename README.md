@@ -71,4 +71,4 @@ Current project phase:
 
 - Milestone 1 complete
 - Milestone 2 functionally complete for the current MVP scope
-- Milestone 3 active with a real editor app scaffold, a compiled Qt shell prototype, a Rust-owned view-model boundary for hierarchy/inspector/canvas preview data, working Qt open/reload/export document actions, and a JSON-first inspector with direct position controls
+- Milestone 3 active with a real editor app scaffold, a compiled Qt shell prototype, a Rust-owned view-model boundary for hierarchy/inspector/canvas preview data, working Qt open/reload/save/save-as/export document actions, a temp working-copy edit loop with dirty-state tracking, and a JSON-first inspector with direct position controls

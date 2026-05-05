@@ -43,6 +43,7 @@ Recommended responsibility split:
 - Rust app state remains the source of truth
 - Qt owns window chrome and widget composition
 - the Qt shell should consume Rust-produced UI data instead of independently re-deriving scene semantics
+- the Qt shell should treat the loaded scene as a working document, not a direct file mutation target; edits can auto-apply into a temp working copy, while explicit save actions persist back to disk
 - the canvas host can start with Rust-produced preview primitives before later moving closer to live renderer hosting
 
 Current prototype status:

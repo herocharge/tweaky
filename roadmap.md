@@ -353,7 +353,8 @@ Current status:
 - Active and meaningfully underway
 - Qt Widgets shell builds and loads example scenes
 - Rust editor app now provides a view-model boundary that the Qt shell consumes for hierarchy, inspector, node bounds, and canvas preview data
-- Qt shell now has baseline document actions for open, reload, and export PNG
+- Qt shell now has baseline document actions for open, reload, save, save-as, and export PNG
+- editor edits now flow through a temp working copy with dirty-state prompts, which makes the Qt shell feel like a real document editor instead of a file-mutation demo
 - Qt inspector now supports a JSON-first property-edit loop by updating selected-node name, position, `params`, and `style` through the Rust editor layer
 - Remaining milestone work is primarily interactivity and document lifecycle, not shell bootstrap
 

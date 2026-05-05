@@ -1,11 +1,13 @@
 #pragma once
 
 #include <QColor>
+#include <QCloseEvent>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMainWindow>
 #include <QMap>
 #include <QRectF>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QDoubleSpinBox>
 #include <QLineEdit>
@@ -75,6 +77,8 @@ struct SceneDocumentData {
     double height = 0.0;
     QColor background = QColor("#f5f1e8");
     QString sourcePath;
+    QString workingPath;
+    bool dirty = false;
     QString selectedNodeId;
     QList<SceneNodeData> nodes;
     QList<SceneCanvasItemData> renderItems;
@@ -126,6 +130,8 @@ public:
 private slots:
   void openSceneDialog();
   void reloadScene();
+  void saveScene();
+  void saveSceneAs();
   void exportPngDialog();
   void applyNodeEdits();
   void scheduleAutoApply();
@@ -135,6 +141,7 @@ private slots:
   void handleTreeSelectionChanged();
 
 private:
+  void closeEvent(QCloseEvent* event) override;
   void buildUi();
   void buildMenus();
   bool loadScene(const QString& scenePath);
@@ -145,17 +152,22 @@ private:
   void populateInspectorFields(const SceneNodeData& node);
   bool inspectorJsonIsValid(QString* errorMessage = nullptr) const;
   void updateWindowTitle();
+  void markDirty(bool dirty);
+  bool ensureWorkingCopyFromSource(const QString& sourcePath);
+  bool saveWorkingCopyToPath(const QString& outputPath);
+  bool maybeResolveUnsavedChanges(const QString& actionLabel);
   bool exportSceneToPng(const QString& outputPath);
   bool applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x, double y,
                               const QString& paramsJson, const QString& styleJson);
-  bool loadSceneFromEditorCli(const QString& scenePath,
+  bool loadSceneFromEditorCli(const QString& scenePath, const QString& sourcePath = QString(),
                               const QStringList& extraArgs = QStringList());
-  bool loadSceneFromRawJson(const QString& scenePath);
+  bool loadSceneFromRawJson(const QString& scenePath, const QString& sourcePath = QString());
   QTreeWidgetItem* findTreeItemByNodeId(const QString& nodeId) const;
   QString editorCliPath() const;
   QString objectToPrettyJson(const QJsonObject& object) const;
 
   SceneDocumentData scene_;
+  QTemporaryDir workingCopyDirectory_;
   QMap<QString, SceneNodeData> nodeIndex_;
   QTreeWidget* hierarchyTree_ = nullptr;
   QLineEdit* nameEdit_ = nullptr;

@@ -21,9 +21,11 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
+#include <QSaveFile>
 #include <QStatusBar>
 #include <QTreeWidgetItemIterator>
 #include <QTreeWidgetItem>
+#include <QUuid>
 #include <QVBoxLayout>
 #include <QMouseEvent>
 
@@ -418,6 +420,15 @@ MainWindow::MainWindow(const QString& scenePath, QWidget* parent) : QMainWindow(
   loadScene(scenePath);
 }
 
+void MainWindow::closeEvent(QCloseEvent* event) {
+  if (!maybeResolveUnsavedChanges("close this window")) {
+    event->ignore();
+    return;
+  }
+
+  event->accept();
+}
+
 void MainWindow::buildUi() {
   setWindowTitle("tweaky");
   resize(1380, 900);
@@ -509,6 +520,16 @@ void MainWindow::buildMenus() {
 
   fileMenu->addSeparator();
 
+  auto* saveAction = fileMenu->addAction("&Save");
+  saveAction->setShortcut(QKeySequence::Save);
+  connect(saveAction, &QAction::triggered, this, &MainWindow::saveScene);
+
+  auto* saveAsAction = fileMenu->addAction("Save &As...");
+  saveAsAction->setShortcut(QKeySequence::SaveAs);
+  connect(saveAsAction, &QAction::triggered, this, &MainWindow::saveSceneAs);
+
+  fileMenu->addSeparator();
+
   auto* exportAction = fileMenu->addAction("Export &PNG...");
   exportAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
   connect(exportAction, &QAction::triggered, this, &MainWindow::exportPngDialog);
@@ -521,13 +542,21 @@ void MainWindow::buildMenus() {
 }
 
 bool MainWindow::loadScene(const QString& scenePath) {
-  if (loadSceneFromEditorCli(scenePath)) {
+  if (!ensureWorkingCopyFromSource(scenePath)) {
+    statusBar()->showMessage(QString("Failed to prepare working copy for %1").arg(scenePath));
+    inspectorText_->setPlainText(QString("Failed to prepare working copy:\n%1").arg(scenePath));
+    return false;
+  }
+
+  if (loadSceneFromEditorCli(scene_.workingPath, scenePath)) {
     refreshUiAfterSceneLoad(QString("Loaded %1 via editor view-model").arg(scenePath));
+    markDirty(false);
     return true;
   }
 
-  if (loadSceneFromRawJson(scenePath)) {
+  if (loadSceneFromRawJson(scene_.workingPath, scenePath)) {
     refreshUiAfterSceneLoad(QString("Loaded %1 via raw JSON fallback").arg(scenePath));
+    markDirty(false);
     return true;
   }
 
@@ -537,6 +566,10 @@ bool MainWindow::loadScene(const QString& scenePath) {
 }
 
 void MainWindow::openSceneDialog() {
+  if (!maybeResolveUnsavedChanges("open another scene")) {
+    return;
+  }
+
   const QString startPath =
       scene_.sourcePath.isEmpty() ? QDir::currentPath() : QFileInfo(scene_.sourcePath).absolutePath();
   const auto filePath = QFileDialog::getOpenFileName(
@@ -559,10 +592,57 @@ void MainWindow::reloadScene() {
     return;
   }
 
+  if (!maybeResolveUnsavedChanges("reload from disk")) {
+    return;
+  }
+
   if (!loadScene(scene_.sourcePath)) {
     QMessageBox::warning(this, "Reload Failed",
                          QString("tweaky could not reload:\n%1").arg(scene_.sourcePath));
   }
+}
+
+void MainWindow::saveScene() {
+  if (scene_.sourcePath.isEmpty()) {
+    saveSceneAs();
+    return;
+  }
+
+  if (!saveWorkingCopyToPath(scene_.sourcePath)) {
+    QMessageBox::warning(this, "Save Failed",
+                         QString("tweaky could not save:\n%1").arg(scene_.sourcePath));
+    return;
+  }
+
+  markDirty(false);
+  statusBar()->showMessage(QString("Saved %1").arg(scene_.sourcePath), 3000);
+}
+
+void MainWindow::saveSceneAs() {
+  if (scene_.workingPath.isEmpty()) {
+    QMessageBox::information(this, "Nothing to Save",
+                             "Load a scene before saving.");
+    return;
+  }
+
+  const QFileInfo sceneFileInfo(scene_.sourcePath.isEmpty() ? scene_.workingPath : scene_.sourcePath);
+  const auto outputPath = QFileDialog::getSaveFileName(
+      this, "Save Scene As", sceneFileInfo.absoluteFilePath(),
+      "Tweaky Scene (*.vsd.json);;JSON Files (*.json)");
+
+  if (outputPath.isEmpty()) {
+    return;
+  }
+
+  if (!saveWorkingCopyToPath(outputPath)) {
+    QMessageBox::warning(this, "Save As Failed",
+                         QString("tweaky could not save:\n%1").arg(outputPath));
+    return;
+  }
+
+  scene_.sourcePath = outputPath;
+  markDirty(false);
+  statusBar()->showMessage(QString("Saved %1").arg(outputPath), 3000);
 }
 
 void MainWindow::exportPngDialog() {
@@ -628,17 +708,18 @@ void MainWindow::applyNodeEdits() {
 void MainWindow::updateWindowTitle() {
   const auto sourceName =
       scene_.sourcePath.isEmpty() ? QString("untitled") : QFileInfo(scene_.sourcePath).fileName();
-  setWindowTitle(QString("tweaky - %1 (%2)").arg(scene_.name, sourceName));
+  const QString dirtyMarker = scene_.dirty ? QString(" *") : QString();
+  setWindowTitle(QString("tweaky - %1 (%2)%3").arg(scene_.name, sourceName, dirtyMarker));
 }
 
 bool MainWindow::exportSceneToPng(const QString& outputPath) {
-  if (scene_.sourcePath.isEmpty()) {
+  if (scene_.workingPath.isEmpty()) {
     return false;
   }
 
   QProcess process(this);
   process.setProgram(editorCliPath());
-  process.setArguments({scene_.sourcePath, "--export", outputPath});
+  process.setArguments({scene_.workingPath, "--export", outputPath});
   process.start();
 
   if (!process.waitForStarted(2000)) {
@@ -661,18 +742,23 @@ bool MainWindow::exportSceneToPng(const QString& outputPath) {
 bool MainWindow::applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x,
                                         double y, const QString& paramsJson,
                                         const QString& styleJson) {
-  if (scene_.sourcePath.isEmpty()) {
+  if (scene_.workingPath.isEmpty()) {
     return false;
   }
 
-  return loadSceneFromEditorCli(
-      scene_.sourcePath,
+  const bool loaded = loadSceneFromEditorCli(
+      scene_.workingPath, scene_.sourcePath,
       {"--rename-node", nodeId, newName, "--set-position", nodeId,
        QString::number(x, 'f', 2), QString::number(y, 'f', 2), "--set-params-json", nodeId,
        paramsJson, "--set-style-json", nodeId, styleJson});
+  if (loaded) {
+    markDirty(true);
+  }
+  return loaded;
 }
 
-bool MainWindow::loadSceneFromEditorCli(const QString& scenePath, const QStringList& extraArgs) {
+bool MainWindow::loadSceneFromEditorCli(const QString& scenePath, const QString& sourcePath,
+                                        const QStringList& extraArgs) {
   QProcess process(this);
   process.setProgram(editorCliPath());
   QStringList arguments = {scenePath};
@@ -696,7 +782,8 @@ bool MainWindow::loadSceneFromEditorCli(const QString& scenePath, const QStringL
   }
 
   const auto root = document.object();
-  scene_.sourcePath = root.value("document_path").toString(scenePath);
+  scene_.workingPath = root.value("document_path").toString(scenePath);
+  scene_.sourcePath = sourcePath.isEmpty() ? scene_.workingPath : sourcePath;
   scene_.name = root.value("document_name").toString("Untitled");
   scene_.width = root.value("canvas_width").toDouble();
   scene_.height = root.value("canvas_height").toDouble();
@@ -777,7 +864,7 @@ bool MainWindow::loadSceneFromEditorCli(const QString& scenePath, const QStringL
   return !scene_.nodes.isEmpty();
 }
 
-bool MainWindow::loadSceneFromRawJson(const QString& scenePath) {
+bool MainWindow::loadSceneFromRawJson(const QString& scenePath, const QString& sourcePath) {
   QFile file(scenePath);
   if (!file.open(QIODevice::ReadOnly)) {
     return false;
@@ -788,7 +875,8 @@ bool MainWindow::loadSceneFromRawJson(const QString& scenePath) {
   const auto rootObject = document.object();
   const auto sceneObject = rootObject.value("document").toObject();
 
-  scene_.sourcePath = scenePath;
+  scene_.workingPath = scenePath;
+  scene_.sourcePath = sourcePath.isEmpty() ? scenePath : sourcePath;
   scene_.name = sceneObject.value("name").toString("Untitled");
   scene_.width = sceneObject.value("width").toDouble();
   scene_.height = sceneObject.value("height").toDouble();
@@ -940,6 +1028,89 @@ void MainWindow::refreshUiAfterSceneLoad(const QString& statusMessage) {
   canvas_->setScene(scene_);
   populateTree();
   statusBar()->showMessage(statusMessage, 2500);
+}
+
+void MainWindow::markDirty(bool dirty) {
+  scene_.dirty = dirty;
+  updateWindowTitle();
+}
+
+bool MainWindow::ensureWorkingCopyFromSource(const QString& sourcePath) {
+  if (!workingCopyDirectory_.isValid()) {
+    return false;
+  }
+
+  const QString uniqueName = QString("%1-%2")
+                                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces),
+                                      QFileInfo(sourcePath).fileName());
+  const QString workingPath = workingCopyDirectory_.filePath(uniqueName);
+  QFile::remove(workingPath);
+  if (!QFile::copy(sourcePath, workingPath)) {
+    return false;
+  }
+
+  scene_.sourcePath = sourcePath;
+  scene_.workingPath = workingPath;
+  return true;
+}
+
+bool MainWindow::saveWorkingCopyToPath(const QString& outputPath) {
+  if (scene_.workingPath.isEmpty()) {
+    return false;
+  }
+
+  QFile inputFile(scene_.workingPath);
+  if (!inputFile.open(QIODevice::ReadOnly)) {
+    return false;
+  }
+
+  QSaveFile outputFile(outputPath);
+  if (!outputFile.open(QIODevice::WriteOnly)) {
+    return false;
+  }
+
+  if (outputFile.write(inputFile.readAll()) < 0) {
+    outputFile.cancelWriting();
+    return false;
+  }
+
+  return outputFile.commit();
+}
+
+bool MainWindow::maybeResolveUnsavedChanges(const QString& actionLabel) {
+  if (!scene_.dirty) {
+    return true;
+  }
+
+  QMessageBox messageBox(this);
+  messageBox.setIcon(QMessageBox::Warning);
+  messageBox.setWindowTitle("Unsaved Changes");
+  messageBox.setText("You have unsaved changes.");
+  messageBox.setInformativeText(QString("Do you want to save before you %1?").arg(actionLabel));
+  auto* saveButton = messageBox.addButton(QMessageBox::Save);
+  auto* discardButton = messageBox.addButton(QMessageBox::Discard);
+  auto* cancelButton = messageBox.addButton(QMessageBox::Cancel);
+  messageBox.setDefaultButton(qobject_cast<QPushButton*>(saveButton));
+  messageBox.exec();
+
+  if (messageBox.clickedButton() == cancelButton) {
+    return false;
+  }
+
+  if (messageBox.clickedButton() == discardButton) {
+    return true;
+  }
+
+  if (messageBox.clickedButton() == saveButton) {
+    if (scene_.sourcePath.isEmpty()) {
+      saveSceneAs();
+    } else {
+      saveScene();
+    }
+    return !scene_.dirty;
+  }
+
+  return true;
 }
 
 bool MainWindow::inspectorJsonIsValid(QString* errorMessage) const {
