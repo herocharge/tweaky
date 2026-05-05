@@ -2,8 +2,10 @@ mod app;
 mod cli;
 mod qt_shell;
 
+use ai_adapter::generate_scene_from_prompt;
 use app::EditorApp;
 use cli::{CliOptions, NodeJsonEdit, NodePositionEdit, RenameNodeOptions};
+use std::path::PathBuf;
 
 fn main() {
     if let Err(message) = run() {
@@ -18,7 +20,24 @@ fn run() -> Result<(), String> {
         || options.set_position.is_some()
         || options.set_params_json.is_some()
         || options.set_style_json.is_some();
-    let mut app = EditorApp::open_path(&options.scene_path).map_err(|error| error.to_string())?;
+    let mut active_scene_path = options.scene_path.clone();
+    let mut app = if let Some(prompt) = &options.mock_prompt {
+        let generated = generate_scene_from_prompt(prompt).map_err(|error| error.to_string())?;
+        let path = options
+            .write_generated_path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("examples/pelican_bicycle.vsd.json"));
+        active_scene_path = path.clone();
+        let app =
+            EditorApp::from_scene(path.clone(), generated.response.document.expect("document"))
+                .map_err(|error| error.to_string())?;
+        if options.write_generated_path.is_some() {
+            app.save_to_path(&path).map_err(|error| error.to_string())?;
+        }
+        app
+    } else {
+        EditorApp::open_path(&options.scene_path).map_err(|error| error.to_string())?
+    };
 
     if let Some(RenameNodeOptions { node_id, new_name }) = &options.rename_node {
         app.rename_node(node_id, new_name.clone())
@@ -43,7 +62,7 @@ fn run() -> Result<(), String> {
     }
 
     if has_edits {
-        app.save_to_path(&options.scene_path)
+        app.save_to_path(&active_scene_path)
             .map_err(|error| error.to_string())?;
     }
 

@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 pub struct CliOptions {
     pub scene_path: PathBuf,
+    pub mock_prompt: Option<String>,
+    pub write_generated_path: Option<PathBuf>,
     pub export_path: Option<PathBuf>,
     pub dump_view_model: bool,
     pub rename_node: Option<RenameNodeOptions>,
@@ -33,6 +35,8 @@ impl CliOptions {
         let _program = args.next();
 
         let mut scene_path = PathBuf::from("examples/basic_poster.vsd.json");
+        let mut mock_prompt = None;
+        let mut write_generated_path = None;
         let mut export_path = None;
         let mut dump_view_model = false;
         let mut rename_node = None;
@@ -48,6 +52,18 @@ impl CliOptions {
                         .next()
                         .ok_or_else(|| "--export requires a file path".to_string())?;
                     export_path = Some(PathBuf::from(path));
+                }
+                "--mock-prompt" => {
+                    let prompt = args
+                        .next()
+                        .ok_or_else(|| "--mock-prompt requires a prompt string".to_string())?;
+                    mock_prompt = Some(prompt);
+                }
+                "--write-generated" => {
+                    let path = args
+                        .next()
+                        .ok_or_else(|| "--write-generated requires a file path".to_string())?;
+                    write_generated_path = Some(PathBuf::from(path));
                 }
                 "--qt" => {
                     qt_shell_requested = true;
@@ -112,6 +128,8 @@ impl CliOptions {
 
         Ok(Self {
             scene_path,
+            mock_prompt,
+            write_generated_path,
             export_path,
             dump_view_model,
             rename_node,
@@ -125,13 +143,15 @@ impl CliOptions {
     pub fn usage() -> String {
         [
             "Usage:",
-            "  cargo run -p editor -- [scene-path] [--export output.png] [--dump-view-model] [--rename-node node-id new-name] [--set-position node-id x y] [--set-params-json node-id json] [--set-style-json node-id json] [--qt]",
+            "  cargo run -p editor -- [scene-path] [--mock-prompt text] [--write-generated output.vsd.json] [--export output.png] [--dump-view-model] [--rename-node node-id new-name] [--set-position node-id x y] [--set-params-json node-id json] [--set-style-json node-id json] [--qt]",
             "",
             "Defaults:",
             "  scene-path = examples/basic_poster.vsd.json",
             "",
             "Notes:",
             "  --dump-view-model prints the editor-facing JSON payload used by the Qt shell",
+            "  --mock-prompt routes through the canned AI adapter instead of reading an input scene path",
+            "  --write-generated saves the AI-produced document before continuing",
             "  edit flags write changes back to the scene path before continuing",
             "  json flags expect a full JSON object string like {\"fill\":\"#dd6b42\"}",
         ]
@@ -180,6 +200,8 @@ mod tests {
         assert!(options.set_params_json.is_none());
         assert!(options.set_style_json.is_none());
         assert!(options.qt_shell_requested);
+        assert!(options.mock_prompt.is_none());
+        assert!(options.write_generated_path.is_none());
     }
 
     #[test]
@@ -241,5 +263,29 @@ mod tests {
             .expect("style json edit should exist");
         assert_eq!(style.node_id, "headline");
         assert_eq!(style.json, "{\"fill\":\"#112233\"}");
+    }
+
+    #[test]
+    fn parses_mock_prompt_flags() {
+        let options = CliOptions::parse(vec![
+            "editor".to_string(),
+            "--mock-prompt".to_string(),
+            "a drawing of a pelican riding a bicycle".to_string(),
+            "--write-generated".to_string(),
+            "out.vsd.json".to_string(),
+        ])
+        .expect("parse should work");
+
+        assert_eq!(
+            options.mock_prompt.as_deref(),
+            Some("a drawing of a pelican riding a bicycle")
+        );
+        assert_eq!(
+            options
+                .write_generated_path
+                .expect("generated path should exist")
+                .to_string_lossy(),
+            "out.vsd.json"
+        );
     }
 }

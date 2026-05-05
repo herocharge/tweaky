@@ -391,6 +391,7 @@ Detailed tasks:
 - Request builder
 - Response parser
 - Validation bridge
+- Mock/canned generation path for workflow testing before live model wiring
 - Repair pipeline
 - Error reporting
 
@@ -427,6 +428,13 @@ Exit criteria:
 
 - The AI can generate scenes that users can open and edit immediately
 - Simple follow-up edits work reliably enough to demonstrate the core product thesis
+
+Current status:
+
+- `docs/ai-contract.md` exists and defines the first prompt/document/patch contract
+- `examples/pelican_bicycle.vsd.json` exists as the first benchmark scene
+- `crates/ai_adapter` now supports canned prompt routing and schema validation
+- `editor` CLI can generate a mock scene from a prompt and optionally write it to disk
 
 Risks:
 

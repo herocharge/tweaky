@@ -114,8 +114,8 @@ Currently implemented:
 - shared text layout now supports `lineHeight`, `maxWidth`, and `align` end-to-end across schema parsing, runtime bounds, Qt preview, Rust view models, and Skia PNG export
 - `docs/ai-contract.md` now defines the first AI prompt/document/patch contract
 - `examples/pelican_bicycle.vsd.json` now serves as the first funny benchmark scene for "a drawing of a pelican riding a bicycle"
+- `ai_adapter` now has a real mock generation path with canned prompt routing, typed response envelopes, and schema validation
 - `scene_schema` typed parameter accessors layered over the generic JSON document
-- Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`
 - Hand-authored example scene documents
@@ -197,6 +197,8 @@ When code exists, verification should usually include the following where releva
 - Confirm the editor still loads example scenes
 - If touching Skia integration, run `cargo test -p renderer --features skia-safe-backend`
 - If touching the Qt shell boundary, rebuild `build/qt_shell` and smoke-launch `tweaky-editor-qt`
+- If touching the mock AI path, run `cargo test -p ai_adapter -p editor`
+- Smoke-test canned generation with `cargo run -p editor -- --mock-prompt "a drawing of a pelican riding a bicycle" --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
 
 For documentation-only changes:
 
@@ -215,10 +217,10 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Add more property editing commands across the Rust editor app boundary
-2. Add save/save-as actions that flow through the Rust app layer
-3. Expand the canvas from preview-only rendering toward interactive selection/manipulation
-4. Preserve the current CLI/editor app workflow as a smoke-test path
+1. Preserve the current CLI/editor app workflow as a smoke-test path
+2. Build from mock AI generation into real scene revision flows
+3. Add editor-side AI affordances once the adapter contract settles
+4. Keep preview/export consistency tightening as the editor matures
 5. Commit and push each slice separately
 
 ## Notes For Future Codex Sessions

@@ -5,4 +5,5 @@ edition.workspace = true
 
 [dependencies]
 scene_schema = { path = "../scene_schema" }
+serde.workspace = true
 serde_json.workspace = true

@@ -19,6 +19,7 @@ Current implementation artifacts:
 - [crates/scene_schema](./crates/scene_schema): Rust parsing and validation crate
 - [crates/scene_runtime](./crates/scene_runtime): runtime registry, traversal, mutation commands, and shared geometry/bounds helpers
 - [crates/renderer](./crates/renderer): backend-agnostic render plan and optional Skia CPU raster backend, now consuming runtime geometry semantics
+- [crates/ai_adapter](./crates/ai_adapter): mock AI generation adapter with canned prompt routing and schema validation
 - [Cargo.toml](./Cargo.toml): workspace root
 - [apps/editor/qt_shell](./apps/editor/qt_shell): Qt Widgets desktop shell prototype
 
@@ -46,6 +47,7 @@ Useful editor commands:
 
 - `cargo run -p editor -- examples/basic_poster.vsd.json --export /tmp/tweaky-editor-smoke.png`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --dump-view-model`
+- `cargo run -p editor -- --mock-prompt "a drawing of a pelican riding a bicycle" --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --rename-node headline "Title Block"`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --set-position headline 320 360 --set-params-json headline '{"text":"JSON MODE","fontFamily":"Inter","fontSize":72,"lineHeight":1.0}' --set-style-json headline '{"fill":"#445566"}'`
 - `cmake -S apps/editor/qt_shell -B build/qt_shell -DCMAKE_PREFIX_PATH=$(brew --prefix qt)`
@@ -74,3 +76,4 @@ Current project phase:
 - Milestone 1 complete
 - Milestone 2 functionally complete for the current MVP scope
 - Milestone 3 active with a real editor app scaffold, a compiled Qt shell prototype, a Rust-owned view-model boundary for hierarchy/inspector/canvas preview data, working Qt open/reload/save/save-as/export document actions, a temp working-copy edit loop with dirty-state tracking and undo/redo, keyboard nudging plus corner-handle resizing for simple bound-based nodes, direct path-point editing, and text layout support that now reaches preview/export via `lineHeight`, `maxWidth`, and `align`
+- Milestone 4 now has its first implementation seam through a mock AI adapter and prompt-to-scene CLI path
