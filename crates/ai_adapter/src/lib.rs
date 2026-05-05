@@ -8,11 +8,13 @@ const PELICAN_BICYCLE: &str = include_str!("../../../examples/pelican_bicycle.vs
 const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
 const SCENE_DOCUMENT_SCHEMA: &str = include_str!("../../../schemas/scene-document.schema.json");
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
+const DEFAULT_GEMINI_FALLBACK_MODEL: &str = "gemini-3.1-flash-lite-preview";
 
 pub const DEFAULT_PROVIDER_ENV_VAR: &str = "TWEAKY_AI_PROVIDER";
 pub const DEFAULT_MODEL_ENV_VAR: &str = "TWEAKY_AI_MODEL";
 pub const DEFAULT_API_KEY_ENV_VAR: &str = "TWEAKY_AI_API_KEY_ENV";
 pub const DEFAULT_BASE_URL_ENV_VAR: &str = "TWEAKY_AI_BASE_URL";
+pub const DEFAULT_FALLBACK_MODELS_ENV_VAR: &str = "TWEAKY_AI_FALLBACK_MODELS";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -35,6 +37,16 @@ pub struct AiSceneResponse {
 pub struct GeneratedScene {
     pub response: AiSceneResponse,
     pub issues: Vec<ValidationIssue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawAiSceneResponse {
+    mode: ResponseMode,
+    summary: String,
+    #[serde(default)]
+    document: Option<serde_json::Value>,
+    #[serde(default)]
+    notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -90,6 +102,7 @@ impl FromStr for ProviderKind {
 pub struct ProviderConfig {
     pub provider: ProviderKind,
     pub model: String,
+    pub fallback_models: Vec<String>,
     pub api_key_env_var: Option<String>,
     pub base_url: Option<String>,
 }
@@ -99,6 +112,7 @@ impl ProviderConfig {
         Self {
             provider,
             model: provider.default_model().to_string(),
+            fallback_models: default_fallback_models(provider),
             api_key_env_var: provider.default_api_key_env_var().map(str::to_string),
             base_url: None,
         }
@@ -130,11 +144,23 @@ impl ProviderConfig {
             config.base_url = Some(base_url);
         }
 
+        if let Ok(fallback_models) = env::var(DEFAULT_FALLBACK_MODELS_ENV_VAR) {
+            let parsed = parse_fallback_models(&fallback_models);
+            if !parsed.is_empty() {
+                config.fallback_models = parsed;
+            }
+        }
+
         Ok(config)
     }
 
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
+        self
+    }
+
+    pub fn with_fallback_models(mut self, models: Vec<String>) -> Self {
+        self.fallback_models = models;
         self
     }
 
@@ -272,8 +298,7 @@ impl SceneGenerator for GeminiProvider {
         let api_key = self.config.resolved_api_key()?.ok_or_else(|| {
             AiAdapterError::InvalidProviderConfig("gemini API key resolution failed".to_string())
         })?;
-        let response = request_gemini_scene(&self.config, &api_key, prompt)?;
-        validate_generated_response(response)
+        generate_gemini_scene_with_fallback(&self.config, &api_key, prompt)
     }
 }
 
@@ -375,16 +400,44 @@ fn normalize_prompt(prompt: &str) -> String {
         .collect::<String>()
 }
 
+fn generate_gemini_scene_with_fallback(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+) -> Result<GeneratedScene, AiAdapterError> {
+    let mut last_error = None;
+    for model in gemini_model_attempts(config) {
+        match request_gemini_scene(config, api_key, prompt, &model) {
+            Ok(response) => match validate_generated_response(response) {
+                Ok(generated) => return Ok(generated),
+                Err(error) if is_retryable_gemini_error(&error) => {
+                    last_error = Some(error);
+                }
+                Err(error) => return Err(error),
+            },
+            Err(error) if is_retryable_gemini_error(&error) => {
+                last_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        AiAdapterError::ApiResponseFailed("Gemini fallback chain exhausted".to_string())
+    }))
+}
+
 fn request_gemini_scene(
     config: &ProviderConfig,
     api_key: &str,
     prompt: &str,
+    model: &str,
 ) -> Result<AiSceneResponse, AiAdapterError> {
-    let endpoint = gemini_endpoint(config);
+    let endpoint = gemini_endpoint(config, model);
     let request = GeminiGenerateContentRequest {
         system_instruction: GeminiContent {
             parts: vec![GeminiTextPart {
-                text: gemini_system_instruction(),
+                text: gemini_system_instruction(model),
             }],
         },
         contents: vec![GeminiContent {
@@ -419,19 +472,19 @@ fn request_gemini_scene(
     if !status.is_success() {
         if let Some(error) = response.error {
             return Err(AiAdapterError::ApiResponseFailed(format!(
-                "{} ({})",
-                error.message, error.status
+                "{} ({}) via {}",
+                error.message, error.status, model
             )));
         }
         return Err(AiAdapterError::ApiResponseFailed(format!(
-            "Gemini returned HTTP status {status}"
+            "Gemini returned HTTP status {status} via {model}"
         )));
     }
 
     if let Some(error) = response.error {
         return Err(AiAdapterError::ApiResponseFailed(format!(
-            "{} ({})",
-            error.message, error.status
+            "{} ({}) via {}",
+            error.message, error.status, model
         )));
     }
 
@@ -453,26 +506,64 @@ fn request_gemini_scene(
         })
         .ok_or_else(|| {
             AiAdapterError::ApiResponseFailed(
-                "Gemini response did not include any JSON text parts".to_string(),
+                format!("Gemini response did not include any JSON text parts via {model}"),
             )
         })?;
 
-    serde_json::from_str::<AiSceneResponse>(&json_text)
-        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
+    parse_ai_scene_response(&json_text)
 }
 
-fn gemini_endpoint(config: &ProviderConfig) -> String {
+fn parse_ai_scene_response(json_text: &str) -> Result<AiSceneResponse, AiAdapterError> {
+    let mut raw: RawAiSceneResponse =
+        serde_json::from_str(json_text).map_err(|error| AiAdapterError::ParseFailed(error.to_string()))?;
+    let document = raw
+        .document
+        .take()
+        .map(repair_scene_document_value)
+        .map(parse_scene_value)
+        .transpose()?;
+
+    Ok(AiSceneResponse {
+        mode: raw.mode,
+        summary: raw.summary,
+        document,
+        notes: raw.notes,
+    })
+}
+
+fn parse_scene_value(value: serde_json::Value) -> Result<SceneFile, AiAdapterError> {
+    serde_json::from_value(value).map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
+}
+
+fn repair_scene_document_value(value: serde_json::Value) -> serde_json::Value {
+    let mut root = match value {
+        serde_json::Value::Object(map) => map,
+        other => return other,
+    };
+
+    if !root.contains_key("version") {
+        root.insert(
+            "version".to_string(),
+            serde_json::Value::String("0.1".to_string()),
+        );
+    }
+
+    serde_json::Value::Object(root)
+}
+
+fn gemini_endpoint(config: &ProviderConfig, model: &str) -> String {
     let base = config
         .base_url
         .as_deref()
         .unwrap_or(DEFAULT_GEMINI_BASE_URL)
         .trim_end_matches('/');
-    format!("{base}/models/{}:generateContent", config.model)
+    format!("{base}/models/{model}:generateContent")
 }
 
-fn gemini_system_instruction() -> String {
+fn gemini_system_instruction(model: &str) -> String {
     format!(
         concat!(
+            "Target model: {}.\n",
             "You generate tweaky scene documents.\n",
             "Return JSON only.\n",
             "Return an object with keys mode, summary, document, and notes.\n",
@@ -484,6 +575,7 @@ fn gemini_system_instruction() -> String {
             "If painterly detail is difficult to represent structurally, use ImageLayer only when necessary.\n",
             "Schema:\n{}\n"
         ),
+        model,
         SCENE_DOCUMENT_SCHEMA
     )
 }
@@ -504,6 +596,8 @@ fn gemini_user_prompt(prompt: &str) -> String {
 }
 
 fn response_envelope_schema() -> serde_json::Value {
+    let document_schema: serde_json::Value = serde_json::from_str(SCENE_DOCUMENT_SCHEMA)
+        .unwrap_or_else(|_| serde_json::json!({ "type": "object" }));
     serde_json::json!({
         "type": "object",
         "properties": {
@@ -514,9 +608,7 @@ fn response_envelope_schema() -> serde_json::Value {
             "summary": {
                 "type": "string"
             },
-            "document": {
-                "type": "object"
-            },
+            "document": document_schema,
             "notes": {
                 "type": "array",
                 "items": {
@@ -526,6 +618,46 @@ fn response_envelope_schema() -> serde_json::Value {
         },
         "required": ["mode", "summary", "document", "notes"]
     })
+}
+
+fn default_fallback_models(provider: ProviderKind) -> Vec<String> {
+    match provider {
+        ProviderKind::Gemini => vec![DEFAULT_GEMINI_FALLBACK_MODEL.to_string()],
+        ProviderKind::Mock | ProviderKind::OpenAiCompatible => Vec::new(),
+    }
+}
+
+fn parse_fallback_models(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn gemini_model_attempts(config: &ProviderConfig) -> Vec<String> {
+    let mut models = vec![config.model.clone()];
+    for fallback in &config.fallback_models {
+        if !models.iter().any(|existing| existing == fallback) {
+            models.push(fallback.clone());
+        }
+    }
+    models
+}
+
+fn is_retryable_gemini_error(error: &AiAdapterError) -> bool {
+    match error {
+        AiAdapterError::ApiResponseFailed(message) => {
+            message.contains("UNAVAILABLE")
+                || message.contains("RESOURCE_EXHAUSTED")
+                || message.contains("DEADLINE_EXCEEDED")
+        }
+        AiAdapterError::HttpFailed(_) => true,
+        AiAdapterError::ParseFailed(_) => true,
+        AiAdapterError::InvalidDocument(_) => true,
+        _ => false,
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -590,8 +722,9 @@ struct GeminiErrorPayload {
 #[cfg(test)]
 mod tests {
     use super::{
-        AiAdapterError, DEFAULT_GEMINI_BASE_URL, GeneratedScene, ProviderConfig, ProviderKind,
-        ResponseMode, gemini_endpoint, generate_scene_from_prompt_with_config,
+        AiAdapterError, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL, GeneratedScene,
+        ProviderConfig, ProviderKind, ResponseMode, gemini_endpoint, gemini_model_attempts,
+        generate_scene_from_prompt_with_config, parse_ai_scene_response,
     };
     use std::env;
 
@@ -635,6 +768,10 @@ mod tests {
     fn provider_defaults_match_expected_models() {
         let gemini = ProviderConfig::for_provider(ProviderKind::Gemini);
         assert_eq!(gemini.model, "gemini-2.5-flash");
+        assert_eq!(
+            gemini.fallback_models,
+            vec![DEFAULT_GEMINI_FALLBACK_MODEL.to_string()]
+        );
         assert_eq!(gemini.api_key_env_var.as_deref(), Some("GEMINI_API_KEY"));
     }
 
@@ -657,8 +794,72 @@ mod tests {
     fn gemini_endpoint_uses_default_base_url() {
         let config = ProviderConfig::for_provider(ProviderKind::Gemini);
         assert_eq!(
-            gemini_endpoint(&config),
+            gemini_endpoint(&config, &config.model),
             format!("{DEFAULT_GEMINI_BASE_URL}/models/gemini-2.5-flash:generateContent")
+        );
+    }
+
+    #[test]
+    fn gemini_attempts_primary_then_fallback() {
+        let config = ProviderConfig::for_provider(ProviderKind::Gemini)
+            .with_model("gemini-2.5-flash".to_string())
+            .with_fallback_models(vec![
+                "gemini-3.1-flash-lite-preview".to_string(),
+                "gemini-3.1-flash-lite-preview".to_string(),
+            ]);
+        assert_eq!(
+            gemini_model_attempts(&config),
+            vec![
+                "gemini-2.5-flash".to_string(),
+                "gemini-3.1-flash-lite-preview".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn repairs_missing_scene_version_in_ai_response() {
+        let response = parse_ai_scene_response(
+            r##"{
+              "mode": "full_document",
+              "summary": "Pelican test",
+              "document": {
+                "document": {
+                  "id": "scene_1",
+                  "name": "Pelican Test",
+                  "width": 1200,
+                  "height": 900,
+                  "background": { "type": "solid", "color": "#ffffff" },
+                  "resources": { "images": {}, "fonts": {}, "palettes": {} },
+                  "root": {
+                    "id": "root",
+                    "type": "Group",
+                    "name": "Root",
+                    "visible": true,
+                    "locked": false,
+                    "blendMode": "normal",
+                    "transform": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "scaleX": 1.0,
+                      "scaleY": 1.0,
+                      "rotation": 0.0,
+                      "opacity": 1.0
+                    },
+                    "params": {},
+                    "style": {},
+                    "children": [],
+                    "meta": {}
+                  }
+                }
+              },
+              "notes": []
+            }"##,
+        )
+        .expect("response should parse after repair");
+
+        assert_eq!(
+            response.document.expect("document should exist").version,
+            "0.1"
         );
     }
 }

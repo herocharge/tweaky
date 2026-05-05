@@ -115,6 +115,7 @@ Currently implemented:
 - `docs/ai-contract.md` now defines the first AI prompt/document/patch contract
 - `examples/pelican_bicycle.vsd.json` now serves as the first funny benchmark scene for "a drawing of a pelican riding a bicycle"
 - `ai_adapter` now has a provider abstraction with a real Gemini prompt-to-scene HTTP path, a mock fallback, typed response envelopes, and extension seams for openai-compatible backends
+- the Gemini path now includes a fallback model chain for transient provider overloads, currently defaulting to `gemini-3.1-flash-lite-preview`
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`
@@ -200,6 +201,7 @@ When code exists, verification should usually include the following where releva
 - If touching the mock AI path, run `cargo test -p ai_adapter -p editor`
 - Smoke-test canned generation with `cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider mock --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
 - Smoke-test live Gemini generation with `GEMINI_API_KEY=... cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider gemini --ai-model gemini-2.5-flash --write-generated /tmp/pelican.vsd.json`
+- If Gemini returns `UNAVAILABLE`, the adapter now automatically retries against the configured fallback chain
 - Keep secrets in ignored local env files or shell env vars, not committed configs
 
 For documentation-only changes:

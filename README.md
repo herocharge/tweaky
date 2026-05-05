@@ -67,7 +67,8 @@ AI provider notes:
 
 - put secrets in local env vars or a local `.env`, never in committed config
 - `.env` files are ignored, and [.env.example](./.env.example) shows the expected shape
-- current CLI/env provider knobs are `TWEAKY_AI_PROVIDER`, `TWEAKY_AI_MODEL`, `TWEAKY_AI_API_KEY_ENV`, and `TWEAKY_AI_BASE_URL`
+- current CLI/env provider knobs are `TWEAKY_AI_PROVIDER`, `TWEAKY_AI_MODEL`, `TWEAKY_AI_FALLBACK_MODELS`, `TWEAKY_AI_API_KEY_ENV`, and `TWEAKY_AI_BASE_URL`
+- the Gemini path now falls back from `gemini-2.5-flash` to `gemini-3.1-flash-lite-preview` on transient capacity errors like `UNAVAILABLE`
 
 Chosen stack:
 
