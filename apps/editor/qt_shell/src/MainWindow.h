@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QMap>
 #include <QRectF>
+#include <QTimer>
 #include <QDoubleSpinBox>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -110,21 +111,25 @@ private slots:
   void reloadScene();
   void exportPngDialog();
   void applyNodeEdits();
+  void scheduleAutoApply();
   void handleTreeSelectionChanged();
 
 private:
   void buildUi();
   void buildMenus();
   bool loadScene(const QString& scenePath);
+  void refreshUiAfterSceneLoad(const QString& statusMessage);
   void populateTree();
   void populateTreeNode(QTreeWidgetItem* parentItem, const SceneNodeData& node);
   void updateInspector(const SceneNodeData& node);
   void populateInspectorFields(const SceneNodeData& node);
+  bool inspectorJsonIsValid(QString* errorMessage = nullptr) const;
   void updateWindowTitle();
   bool exportSceneToPng(const QString& outputPath);
   bool applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x, double y,
                               const QString& paramsJson, const QString& styleJson);
-  bool loadSceneFromEditorCli(const QString& scenePath);
+  bool loadSceneFromEditorCli(const QString& scenePath,
+                              const QStringList& extraArgs = QStringList());
   bool loadSceneFromRawJson(const QString& scenePath);
   QTreeWidgetItem* findTreeItemByNodeId(const QString& nodeId) const;
   QString editorCliPath() const;
@@ -141,4 +146,6 @@ private:
   QPushButton* applyEditsButton_ = nullptr;
   QTextEdit* inspectorText_ = nullptr;
   CanvasWidget* canvas_ = nullptr;
+  QTimer* autoApplyTimer_ = nullptr;
+  bool suppressInspectorSignals_ = false;
 };

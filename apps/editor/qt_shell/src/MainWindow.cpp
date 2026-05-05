@@ -217,10 +217,20 @@ void MainWindow::buildUi() {
   inspectorForm->addRow("Style JSON", styleEdit_);
   inspectorLayout->addLayout(inspectorForm);
 
+  autoApplyTimer_ = new QTimer(this);
+  autoApplyTimer_->setSingleShot(true);
+  autoApplyTimer_->setInterval(350);
+  connect(autoApplyTimer_, &QTimer::timeout, this, &MainWindow::applyNodeEdits);
+
   applyEditsButton_ = new QPushButton("Apply Properties", inspectorPanel);
   inspectorLayout->addWidget(applyEditsButton_);
   connect(applyEditsButton_, &QPushButton::clicked, this, &MainWindow::applyNodeEdits);
   connect(nameEdit_, &QLineEdit::returnPressed, this, &MainWindow::applyNodeEdits);
+  connect(nameEdit_, &QLineEdit::textEdited, this, &MainWindow::scheduleAutoApply);
+  connect(xSpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::scheduleAutoApply);
+  connect(ySpin_, &QDoubleSpinBox::valueChanged, this, &MainWindow::scheduleAutoApply);
+  connect(paramsEdit_, &QPlainTextEdit::textChanged, this, &MainWindow::scheduleAutoApply);
+  connect(styleEdit_, &QPlainTextEdit::textChanged, this, &MainWindow::scheduleAutoApply);
 
   inspectorText_ = new QTextEdit(this);
   inspectorText_->setReadOnly(true);
@@ -261,18 +271,12 @@ void MainWindow::buildMenus() {
 
 bool MainWindow::loadScene(const QString& scenePath) {
   if (loadSceneFromEditorCli(scenePath)) {
-    updateWindowTitle();
-    canvas_->setScene(scene_);
-    populateTree();
-    statusBar()->showMessage(QString("Loaded %1 via editor view-model").arg(scenePath));
+    refreshUiAfterSceneLoad(QString("Loaded %1 via editor view-model").arg(scenePath));
     return true;
   }
 
   if (loadSceneFromRawJson(scenePath)) {
-    updateWindowTitle();
-    canvas_->setScene(scene_);
-    populateTree();
-    statusBar()->showMessage(QString("Loaded %1 via raw JSON fallback").arg(scenePath));
+    refreshUiAfterSceneLoad(QString("Loaded %1 via raw JSON fallback").arg(scenePath));
     return true;
   }
 
@@ -333,53 +337,41 @@ void MainWindow::exportPngDialog() {
   }
 }
 
+void MainWindow::scheduleAutoApply() {
+  if (suppressInspectorSignals_ || scene_.selectedNodeId.isEmpty()) {
+    return;
+  }
+
+  autoApplyTimer_->start();
+}
+
 void MainWindow::applyNodeEdits() {
   if (scene_.selectedNodeId.isEmpty()) {
-    QMessageBox::information(this, "Nothing Selected",
-                             "Select a node before applying edits.");
     return;
   }
 
   const QString newName = nameEdit_->text().trimmed();
   if (newName.isEmpty()) {
-    QMessageBox::information(this, "Empty Name", "Node names cannot be empty.");
+    return;
+  }
+
+  QString validationError;
+  if (!inspectorJsonIsValid(&validationError)) {
+    statusBar()->showMessage(validationError, 2500);
     return;
   }
 
   const QString paramsJson = paramsEdit_->toPlainText().trimmed();
   const QString styleJson = styleEdit_->toPlainText().trimmed();
-  const auto paramsDocument = QJsonDocument::fromJson(paramsJson.toUtf8());
-  if (!paramsDocument.isObject()) {
-    QMessageBox::information(this, "Invalid Params JSON",
-                             "Params must be a valid JSON object.");
-    return;
-  }
-  const auto styleDocument = QJsonDocument::fromJson(styleJson.toUtf8());
-  if (!styleDocument.isObject()) {
-    QMessageBox::information(this, "Invalid Style JSON",
-                             "Style must be a valid JSON object.");
-    return;
-  }
 
   if (!applyNodePropertyEdits(scene_.selectedNodeId, newName, xSpin_->value(), ySpin_->value(),
                               paramsJson, styleJson)) {
-    QMessageBox::warning(this, "Apply Failed",
-                         QString("tweaky could not update node %1.")
-                             .arg(scene_.selectedNodeId));
+    statusBar()->showMessage(QString("Failed to update node %1").arg(scene_.selectedNodeId),
+                             3000);
     return;
   }
 
-  if (!loadScene(scene_.sourcePath)) {
-    QMessageBox::warning(this, "Reload Failed",
-                         QString("tweaky renamed the node but failed to reload:\n%1")
-                             .arg(scene_.sourcePath));
-    return;
-  }
-
-  if (auto* selectedItem = findTreeItemByNodeId(scene_.selectedNodeId)) {
-    hierarchyTree_->setCurrentItem(selectedItem);
-  }
-  statusBar()->showMessage(QString("Updated node %1").arg(newName), 4000);
+  refreshUiAfterSceneLoad(QString("Updated node %1").arg(newName));
 }
 
 void MainWindow::updateWindowTitle() {
@@ -422,37 +414,20 @@ bool MainWindow::applyNodePropertyEdits(const QString& nodeId, const QString& ne
     return false;
   }
 
-  QProcess process(this);
-  process.setProgram(editorCliPath());
-  QStringList arguments = {scene_.sourcePath, "--rename-node", nodeId, newName,
-                           "--set-position", nodeId,
-                           QString::number(x, 'f', 2), QString::number(y, 'f', 2),
-                           "--set-params-json", nodeId, paramsJson,
-                           "--set-style-json", nodeId, styleJson};
-
-  process.setArguments(arguments);
-  process.start();
-
-  if (!process.waitForStarted(2000)) {
-    return false;
-  }
-
-  if (!process.waitForFinished(15000) || process.exitStatus() != QProcess::NormalExit ||
-      process.exitCode() != 0) {
-    const QString stderrText = QString::fromUtf8(process.readAllStandardError()).trimmed();
-    if (!stderrText.isEmpty()) {
-      inspectorText_->setPlainText(stderrText);
-    }
-    return false;
-  }
-
-  return true;
+  return loadSceneFromEditorCli(
+      scene_.sourcePath,
+      {"--rename-node", nodeId, newName, "--set-position", nodeId,
+       QString::number(x, 'f', 2), QString::number(y, 'f', 2), "--set-params-json", nodeId,
+       paramsJson, "--set-style-json", nodeId, styleJson});
 }
 
-bool MainWindow::loadSceneFromEditorCli(const QString& scenePath) {
+bool MainWindow::loadSceneFromEditorCli(const QString& scenePath, const QStringList& extraArgs) {
   QProcess process(this);
   process.setProgram(editorCliPath());
-  process.setArguments({scenePath, "--dump-view-model"});
+  QStringList arguments = {scenePath};
+  arguments.append(extraArgs);
+  arguments.append("--dump-view-model");
+  process.setArguments(arguments);
   process.start();
 
   if (!process.waitForStarted(2000)) {
@@ -671,15 +646,44 @@ void MainWindow::updateInspector(const SceneNodeData& node) {
 }
 
 void MainWindow::populateInspectorFields(const SceneNodeData& node) {
+  suppressInspectorSignals_ = true;
   nameEdit_->setText(node.name);
   xSpin_->setValue(node.positionX);
   ySpin_->setValue(node.positionY);
   paramsEdit_->setPlainText(objectToPrettyJson(node.params));
   styleEdit_->setPlainText(objectToPrettyJson(node.style));
+  suppressInspectorSignals_ = false;
 }
 
 QString MainWindow::objectToPrettyJson(const QJsonObject& object) const {
   return QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Indented)).trimmed();
+}
+
+void MainWindow::refreshUiAfterSceneLoad(const QString& statusMessage) {
+  updateWindowTitle();
+  canvas_->setScene(scene_);
+  populateTree();
+  statusBar()->showMessage(statusMessage, 2500);
+}
+
+bool MainWindow::inspectorJsonIsValid(QString* errorMessage) const {
+  const auto paramsDocument = QJsonDocument::fromJson(paramsEdit_->toPlainText().trimmed().toUtf8());
+  if (!paramsDocument.isObject()) {
+    if (errorMessage != nullptr) {
+      *errorMessage = "Params must be a valid JSON object.";
+    }
+    return false;
+  }
+
+  const auto styleDocument = QJsonDocument::fromJson(styleEdit_->toPlainText().trimmed().toUtf8());
+  if (!styleDocument.isObject()) {
+    if (errorMessage != nullptr) {
+      *errorMessage = "Style must be a valid JSON object.";
+    }
+    return false;
+  }
+
+  return true;
 }
 
 QTreeWidgetItem* MainWindow::findTreeItemByNodeId(const QString& nodeId) const {

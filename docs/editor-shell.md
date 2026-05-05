@@ -53,6 +53,7 @@ Current prototype status:
 - Displays hierarchy, inspector, and a simple canvas preview driven by Rust-fed render items
 - Exposes `File` actions for open, reload, export PNG, and quit
 - Supports selected-node name, `x`/`y`, raw `params`, and raw `style` edits from the inspector via the Rust editor CLI
+- Auto-applies valid inspector edits and preserves selection on refresh by consuming the edited Rust view model directly
 - Compiles successfully against local Qt 6
 
 ## Short-Term Next Steps
