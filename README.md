@@ -14,6 +14,8 @@ Current implementation artifacts:
 - [schemas/scene-document.schema.json](./schemas/scene-document.schema.json): JSON Schema for scene document version `0.1`
 - [examples](./examples): hand-authored example `.vsd.json` scene documents
 - [crates/scene_schema](./crates/scene_schema): Rust parsing and validation crate
+- [crates/scene_runtime](./crates/scene_runtime): runtime registry, traversal, and mutation commands
+- [crates/renderer](./crates/renderer): backend-agnostic render plan and bounds layer
 - [Cargo.toml](./Cargo.toml): workspace root
 
 Chosen stack:

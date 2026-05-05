@@ -494,7 +494,7 @@ Avoid:
 
 ## Immediate Next Actions
 
-1. Build the first `scene_runtime` registry and traversal APIs
-2. Decide the first command/edit abstraction for document mutations
-3. Expand schema validation where the current generic `params` model is too loose
-4. Start renderer crate design around Skia-facing interfaces without committing to full Qt integration yet
+1. Expand schema validation where the current generic `params` model is too loose
+2. Start renderer crate design around Skia-facing interfaces without committing to full Qt integration yet
+3. Add shared geometry, bounds, and traversal contracts needed by rendering and editor selection
+4. Keep pushing work to `origin/main` as focused commits land

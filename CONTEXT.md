@@ -82,15 +82,20 @@ Currently implemented:
 
 - Root Cargo workspace
 - `scene_schema` crate with parsing and validation
-- Placeholder crates for `scene_runtime`, `renderer`, and `ai_adapter`
+- `scene_runtime` crate with component registry, depth-first traversal, and command-based mutation
+- `renderer` crate with render plan generation, primitive extraction, and rough bounds estimation
+- Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`
 - Hand-authored example scene documents
+- Git remote `origin` configured at `git@github.com:herocharge/tweaky.git`
+- `main` pushed upstream
 
 Expected next implementation step:
 
-- Deepen `scene_schema` from baseline validation into more complete typed document modeling as needed
-- Start `scene_runtime` with registry and traversal primitives
+- Decide how much node-specific typing to introduce on top of generic `params`
+- Start Skia-facing renderer integration on top of the current render-plan abstraction
+- Add shared geometry/bounds contracts wherever the editor will need them directly
 
 ## Intended Repo Shape
 
@@ -120,11 +125,13 @@ This is the preferred working loop for future sessions.
 
 1. Read `CONTEXT.md` for the latest decisions and next-step guidance
 2. Read `git status` and `git log --oneline -n 10`
-3. Pick one milestone slice from `roadmap.md`
-4. Make the smallest useful change that advances that slice
-5. Verify locally
-6. Update docs if the architecture or workflow changed
-7. Commit with a focused message
+3. Read `git remote -v` if push state or upstream configuration matters
+4. Pick one milestone slice from `roadmap.md`
+5. Make the smallest useful change that advances that slice
+6. Verify locally
+7. Update docs if the architecture or workflow changed
+8. Commit with a focused message
+9. Push `main` unless the user says otherwise
 
 ### Commit rhythm
 
@@ -174,11 +181,11 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Build `scene_runtime` registry and traversal helpers
-2. Decide whether validation should remain stringly in `params` for MVP or become partially typed per node
-3. Add command-oriented document mutation helpers
-4. Begin renderer crate architecture around Skia integration points
-5. Commit each slice separately
+1. Decide whether validation should remain stringly in `params` for MVP or become partially typed per node
+2. Begin Skia-facing renderer integration on top of the current render plan
+3. Add scene graph geometry/bounds abstractions that renderer and editor can share more explicitly
+4. Start export-oriented render interfaces
+5. Commit and push each slice separately
 
 ## Notes For Future Codex Sessions
 
