@@ -142,6 +142,7 @@ private slots:
 
 private:
   void closeEvent(QCloseEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
   void buildUi();
   void buildMenus();
   bool loadScene(const QString& scenePath);
@@ -156,6 +157,7 @@ private:
   bool ensureWorkingCopyFromSource(const QString& sourcePath);
   bool saveWorkingCopyToPath(const QString& outputPath);
   bool maybeResolveUnsavedChanges(const QString& actionLabel);
+  bool nudgeSelectedNode(double deltaX, double deltaY);
   bool exportSceneToPng(const QString& outputPath);
   bool applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x, double y,
                               const QString& paramsJson, const QString& styleJson);

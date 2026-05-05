@@ -106,6 +106,7 @@ Currently implemented:
 - the current inspector is intentionally JSON-first: selected-node name, `x`/`y`, raw `params`, and raw `style` edits flow from the Qt shell into the Rust editor app
 - valid inspector edits now auto-apply without requiring the button, and scene refreshes preserve the current node selection by reusing the edited view model
 - the Qt shell now edits a temp working copy instead of the original file directly; `Save` and `Save As` persist that working copy intentionally, export uses the working copy, and open/reload/close prompt on unsaved changes
+- the Qt shell supports arrow-key nudging for the selected node, with `Shift` for larger 10-unit steps, while intentionally ignoring arrow keys when text fields are focused
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold

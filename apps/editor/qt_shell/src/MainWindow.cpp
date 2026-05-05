@@ -27,6 +27,7 @@
 #include <QTreeWidgetItem>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <QKeyEvent>
 #include <QMouseEvent>
 
 CanvasWidget::CanvasWidget(QWidget* parent) : QWidget(parent) {
@@ -427,6 +428,43 @@ void MainWindow::closeEvent(QCloseEvent* event) {
   }
 
   event->accept();
+}
+
+void MainWindow::keyPressEvent(QKeyEvent* event) {
+  const auto* focus = QApplication::focusWidget();
+  if (qobject_cast<const QLineEdit*>(focus) != nullptr ||
+      qobject_cast<const QPlainTextEdit*>(focus) != nullptr ||
+      qobject_cast<const QTextEdit*>(focus) != nullptr) {
+    QMainWindow::keyPressEvent(event);
+    return;
+  }
+
+  const double step = event->modifiers().testFlag(Qt::ShiftModifier) ? 10.0 : 1.0;
+  bool handled = false;
+
+  switch (event->key()) {
+    case Qt::Key_Left:
+      handled = nudgeSelectedNode(-step, 0.0);
+      break;
+    case Qt::Key_Right:
+      handled = nudgeSelectedNode(step, 0.0);
+      break;
+    case Qt::Key_Up:
+      handled = nudgeSelectedNode(0.0, -step);
+      break;
+    case Qt::Key_Down:
+      handled = nudgeSelectedNode(0.0, step);
+      break;
+    default:
+      break;
+  }
+
+  if (handled) {
+    event->accept();
+    return;
+  }
+
+  QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::buildUi() {
@@ -1110,6 +1148,31 @@ bool MainWindow::maybeResolveUnsavedChanges(const QString& actionLabel) {
     return !scene_.dirty;
   }
 
+  return true;
+}
+
+bool MainWindow::nudgeSelectedNode(double deltaX, double deltaY) {
+  if (scene_.selectedNodeId.isEmpty() || !nodeIndex_.contains(scene_.selectedNodeId)) {
+    return false;
+  }
+
+  const SceneNodeData node = nodeIndex_.value(scene_.selectedNodeId);
+  const double nextX = node.positionX + deltaX;
+  const double nextY = node.positionY + deltaY;
+  const QString nodeName = nameEdit_->text().trimmed().isEmpty() ? node.name : nameEdit_->text().trimmed();
+
+  const QString paramsJson = paramsEdit_->toPlainText().trimmed();
+  const QString styleJson = styleEdit_->toPlainText().trimmed();
+
+  if (!applyNodePropertyEdits(scene_.selectedNodeId, nodeName, nextX, nextY, paramsJson, styleJson)) {
+    statusBar()->showMessage(QString("Failed to move node %1").arg(scene_.selectedNodeId), 2500);
+    return false;
+  }
+
+  refreshUiAfterSceneLoad(QString("Moved %1 to (%2, %3)")
+                              .arg(nodeName)
+                              .arg(nextX, 0, 'f', 2)
+                              .arg(nextY, 0, 'f', 2));
   return true;
 }
 

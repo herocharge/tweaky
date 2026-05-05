@@ -356,6 +356,7 @@ Current status:
 - Qt shell now has baseline document actions for open, reload, save, save-as, and export PNG
 - editor edits now flow through a temp working copy with dirty-state prompts, which makes the Qt shell feel like a real document editor instead of a file-mutation demo
 - Qt inspector now supports a JSON-first property-edit loop by updating selected-node name, position, `params`, and `style` through the Rust editor layer
+- selected nodes can now be nudged with arrow keys, with `Shift` for larger moves, which improves the transform-edit loop without adding resize complexity yet
 - Remaining milestone work is primarily interactivity and document lifecycle, not shell bootstrap
 
 ## Milestone 4: AI Integration

@@ -52,14 +52,16 @@ Current prototype status:
 - First tries to load a Rust-produced JSON view model via `editor --dump-view-model`
 - Falls back to raw `.vsd.json` loading if the Rust CLI is unavailable
 - Displays hierarchy, inspector, and a simple canvas preview driven by Rust-fed render items
-- Exposes `File` actions for open, reload, export PNG, and quit
+- Exposes `File` actions for open, reload, save, save-as, export PNG, and quit
 - Supports selected-node name, `x`/`y`, raw `params`, and raw `style` edits from the inspector via the Rust editor CLI
 - Auto-applies valid inspector edits and preserves selection on refresh by consuming the edited Rust view model directly
+- Maintains a temp working copy so `Save` and `Save As` are explicit document actions instead of every edit mutating the original file
+- Supports arrow-key nudging for selected nodes, with larger `Shift` steps, while leaving text-entry fields alone
 - Compiles successfully against local Qt 6
 
 ## Short-Term Next Steps
 
 1. Keep the editor state model stable as the shell evolves
 2. Add more editable properties through the Rust app layer beyond name/position/raw-json
-3. Add save/save-as behavior that keeps Rust responsible for document I/O semantics
+3. Add richer canvas manipulation like resize handles and direct geometry editing
 4. Replace more fallback-only Qt logic with Rust-owned view/state data over time
