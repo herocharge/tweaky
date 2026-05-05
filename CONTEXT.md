@@ -110,6 +110,7 @@ Currently implemented:
 - the Qt shell now supports corner-handle resizing for `Rectangle`, `Ellipse`, and `ImageLayer` nodes by rewriting `x`/`y` plus the corresponding size params through the Rust edit path
 - the Qt shell now keeps lightweight snapshot history for undo/redo over the working copy, and selected `Text` nodes support double-click content editing plus keyboard font-size stepping
 - selected `Path` nodes now expose draggable point handles on the canvas, and selected text nodes support line-height stepping in addition to content/font-size editing
+- shared text layout now supports `lineHeight`, `maxWidth`, and `align` end-to-end across schema parsing, runtime bounds, Qt preview, Rust view models, and Skia PNG export
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold

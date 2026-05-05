@@ -62,11 +62,12 @@ Current prototype status:
 - Supports first text-specific affordances: double-click a text node to edit its content, and use `[` / `]` or `-` / `+` to step font size for the selected text node
 - Supports direct point editing for selected `Path` nodes via draggable canvas handles; this first pass assumes translation-first path editing rather than full inverse-transform vector editing
 - Supports text line-height stepping with `Alt+Up` / `Alt+Down` for quicker multiline layout adjustment
+- Consumes richer text layout metadata from Rust render items, including `lineHeight`, `maxWidth`, and `align`, so boxed/wrapped text can preview closer to export
 - Compiles successfully against local Qt 6
 
 ## Short-Term Next Steps
 
 1. Keep the editor state model stable as the shell evolves
 2. Add more editable properties through the Rust app layer beyond name/position/raw-json
-3. Make path editing more transform-aware and add richer text layout controls like alignment and box-based text wrapping
+3. Make path editing more transform-aware and add richer text layout controls like selection boxes, alignment actions, and explicit text-frame handles
 4. Replace more fallback-only Qt logic with Rust-owned view/state data over time

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <QAction>
 #include <QApplication>
 #include <QDockWidget>
@@ -46,6 +47,60 @@ QList<QPointF> resizeHandleCenters(const QRectF& outlineRect) {
       outlineRect.bottomLeft(),
       outlineRect.bottomRight(),
   };
+}
+
+QStringList wrapTextLines(const QString& text, double fontSize, std::optional<double> maxWidth) {
+  const double approxCharWidth = std::max(1.0, fontSize * 0.6);
+  const std::optional<int> maxChars = maxWidth.has_value()
+                                          ? std::optional<int>(std::max(1, static_cast<int>(
+                                                     std::floor(*maxWidth / approxCharWidth))))
+                                          : std::nullopt;
+  QStringList lines;
+  const QStringList rawLines = text.split('\n');
+  for (const auto& rawLine : rawLines) {
+    if (!maxChars.has_value() || rawLine.size() <= *maxChars) {
+      lines.push_back(rawLine);
+      continue;
+    }
+
+    const QStringList words = rawLine.split(' ', Qt::SkipEmptyParts);
+    if (words.isEmpty()) {
+      for (int index = 0; index < rawLine.size(); index += *maxChars) {
+        lines.push_back(rawLine.mid(index, *maxChars));
+      }
+      continue;
+    }
+
+    QString current;
+    for (const auto& word : words) {
+      const QString candidate = current.isEmpty() ? word : QString("%1 %2").arg(current, word);
+      if (candidate.size() <= *maxChars) {
+        current = candidate;
+      } else {
+        if (!current.isEmpty()) {
+          lines.push_back(current);
+        }
+        if (word.size() <= *maxChars) {
+          current = word;
+        } else {
+          for (int index = 0; index < word.size(); index += *maxChars) {
+            lines.push_back(word.mid(index, *maxChars));
+          }
+          current.clear();
+        }
+      }
+    }
+
+    if (!current.isEmpty()) {
+      lines.push_back(current);
+    }
+  }
+
+  if (lines.isEmpty()) {
+    lines.push_back(QString());
+  }
+
+  return lines;
 }
 
 }  // namespace
@@ -258,16 +313,43 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         textFont.setFamily("Helvetica");
       }
       painter.setFont(textFont);
-      drawApproxBlur([&](const QColor& blurColor) {
-        painter.setPen(blurColor);
-        painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
-      });
-      drawApproxShadow([&](const QColor& shadowColor) {
-        painter.setPen(shadowColor);
-        painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
-      });
-      painter.setPen(fill);
-      painter.drawText(mapScenePoint(item.origin, canvasRect), item.text);
+      const std::optional<double> maxWidth = item.maxWidth > 0.0
+                                                 ? std::optional<double>(item.maxWidth)
+                                                 : std::nullopt;
+      const QStringList textLines = wrapTextLines(item.text, item.fontSize, maxWidth);
+      const double lineStep = item.fontSize * std::max(0.6, item.lineHeight);
+      const double boxWidthScene = maxWidth.value_or([&]() {
+        int maxChars = 0;
+        for (const auto& line : textLines) {
+          maxChars = std::max(maxChars, static_cast<int>(line.size()));
+        }
+        return std::max(1.0, maxChars * item.fontSize * 0.6);
+      }());
+      const double scaleX = scene_.width > 0.0 ? canvasRect.width() / scene_.width : 1.0;
+      const double boxWidthWidget = boxWidthScene * scaleX;
+
+      auto drawTextBlock = [&](const QColor& color, const QPointF& originOffset) {
+        painter.setPen(color);
+        for (int index = 0; index < textLines.size(); ++index) {
+          const QString& line = textLines.at(index);
+          const QPointF baseOrigin = mapScenePoint(
+              ScenePointData{item.origin.x, item.origin.y + lineStep * index}, canvasRect);
+          const QRectF lineRect(baseOrigin.x() + originOffset.x(), baseOrigin.y() + originOffset.y(),
+                                boxWidthWidget, lineStep * (scene_.height > 0.0 ? canvasRect.height() / scene_.height : 1.0));
+          int flags = Qt::AlignLeft;
+          if (item.textAlign == "center") {
+            flags = Qt::AlignHCenter;
+          } else if (item.textAlign == "right") {
+            flags = Qt::AlignRight;
+          }
+          painter.drawText(lineRect, flags | Qt::AlignTop, line);
+        }
+      };
+
+      drawApproxBlur([&](const QColor& blurColor) { drawTextBlock(blurColor, QPointF(0.0, 0.0)); });
+      drawApproxShadow(
+          [&](const QColor& shadowColor) { drawTextBlock(shadowColor, QPointF(0.0, 0.0)); });
+      drawTextBlock(fill, QPointF(0.0, 0.0));
     } else if (item.kind == "ImageLayer" && item.hasBounds) {
       const SceneRectData effectiveBounds =
           resizeSelectedItem ? resizeSceneRect : item.bounds;
@@ -1262,6 +1344,9 @@ bool MainWindow::loadSceneFromEditorCli(const QString& scenePath, const QString&
     item.text = object.value("text").toString();
     item.fontSize = object.value("font_size").toDouble(12.0);
     item.fontFamily = object.value("font_family").toString();
+    item.lineHeight = object.value("line_height").toDouble(1.2);
+    item.maxWidth = object.value("max_width").toDouble(0.0);
+    item.textAlign = object.value("text_align").toString();
     item.imageRef = object.value("image_ref").toString();
     item.blurRadius = object.value("blur_radius").toDouble(0.0);
 

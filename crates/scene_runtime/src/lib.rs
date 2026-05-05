@@ -463,6 +463,8 @@ pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
                 &node.transform,
                 &params.text,
                 params.font_size,
+                params.line_height,
+                params.max_width,
             ))
         }
         scene_schema::NodeType::ImageLayer => {
@@ -606,15 +608,25 @@ fn inflate_rect(rect: Rect, amount: f64) -> Rect {
     }
 }
 
-fn estimate_text_bounds(transform: &Transform, text: &str, font_size: f64) -> Rect {
-    let lines = text.lines().collect::<Vec<_>>();
+fn estimate_text_bounds(
+    transform: &Transform,
+    text: &str,
+    font_size: f64,
+    line_height: f64,
+    max_width: Option<f64>,
+) -> Rect {
+    let lines = wrap_text_lines(text, font_size, max_width);
     let max_line_chars = lines
         .iter()
         .map(|line| line.chars().count())
         .max()
         .unwrap_or(0) as f64;
-    let width = max_line_chars * font_size * 0.6 * transform.scale_x.abs();
-    let height = lines.len() as f64 * font_size * 1.2 * transform.scale_y.abs();
+    let wrapped_width = max_line_chars * font_size * 0.6;
+    let width = max_width
+        .map(|limit| wrapped_width.min(limit))
+        .unwrap_or(wrapped_width)
+        * transform.scale_x.abs();
+    let height = lines.len() as f64 * font_size * line_height * transform.scale_y.abs();
 
     Rect::from_origin_size(
         Point {
@@ -624,6 +636,80 @@ fn estimate_text_bounds(transform: &Transform, text: &str, font_size: f64) -> Re
         width,
         height,
     )
+}
+
+fn wrap_text_lines(text: &str, font_size: f64, max_width: Option<f64>) -> Vec<String> {
+    let approx_char_width = (font_size * 0.6).max(1.0);
+    let max_chars = max_width
+        .map(|width| (width / approx_char_width).floor() as usize)
+        .filter(|chars| *chars > 0);
+
+    let mut lines = Vec::new();
+    for raw_line in text.lines() {
+        if let Some(limit) = max_chars {
+            lines.extend(wrap_single_line(raw_line, limit));
+        } else {
+            lines.push(raw_line.to_string());
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn wrap_single_line(line: &str, max_chars: usize) -> Vec<String> {
+    if line.chars().count() <= max_chars {
+        return vec![line.to_string()];
+    }
+
+    let words = line.split_whitespace().collect::<Vec<_>>();
+    if words.is_empty() {
+        let chars = line.chars().collect::<Vec<_>>();
+        return chars
+            .chunks(max_chars)
+            .map(|chunk| chunk.iter().collect())
+            .collect();
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in words {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+
+        if candidate.chars().count() <= max_chars {
+            current = candidate;
+        } else {
+            if !current.is_empty() {
+                lines.push(current);
+            }
+            if word.chars().count() <= max_chars {
+                current = word.to_string();
+            } else {
+                let chars = word.chars().collect::<Vec<_>>();
+                for chunk in chars.chunks(max_chars) {
+                    lines.push(chunk.iter().collect());
+                }
+                current = String::new();
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
 }
 
 fn bounds_from_points(transform: &Transform, points: &[PathPoint]) -> Option<Rect> {

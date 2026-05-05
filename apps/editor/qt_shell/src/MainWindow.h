@@ -74,6 +74,9 @@ struct SceneCanvasItemData {
     QString text;
     double fontSize = 12.0;
     QString fontFamily;
+    double lineHeight = 1.2;
+    double maxWidth = 0.0;
+    QString textAlign;
     QString imageRef;
     double blurRadius = 0.0;
     bool hasShadow = false;

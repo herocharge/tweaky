@@ -140,12 +140,7 @@ fn draw_text(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &TextPrim
     maybe_draw_shadow_text(canvas, item, primitive);
     let paint = paint_for_fill(item, primitive.fill.as_deref());
     let font = resolve_font(primitive);
-    canvas.draw_str(
-        primitive.text.as_str(),
-        (primitive.origin.x as f32, primitive.origin.y as f32),
-        &font,
-        &paint,
-    );
+    draw_text_lines(canvas, primitive, &font, &paint, 0.0, 0.0);
 }
 
 fn paint_for_fill(item: &RenderItem, fill: Option<&str>) -> Paint {
@@ -221,15 +216,7 @@ fn maybe_draw_shadow_text(
     };
     let paint = shadow_paint(item, shadow);
     let font = resolve_font(primitive);
-    canvas.draw_str(
-        primitive.text.as_str(),
-        (
-            (primitive.origin.x + shadow.offset_x) as f32,
-            (primitive.origin.y + shadow.offset_y) as f32,
-        ),
-        &font,
-        &paint,
-    );
+    draw_text_lines(canvas, primitive, &font, &paint, shadow.offset_x, shadow.offset_y);
 }
 
 fn resolve_font(primitive: &TextPrimitive) -> Font {
@@ -249,6 +236,121 @@ fn resolve_font(primitive: &TextPrimitive) -> Font {
     }
 
     font
+}
+
+fn draw_text_lines(
+    canvas: &skia_safe::Canvas,
+    primitive: &TextPrimitive,
+    font: &Font,
+    paint: &Paint,
+    offset_x: f64,
+    offset_y: f64,
+) {
+    let lines = wrap_text_lines(
+        &primitive.text,
+        primitive.font_size,
+        primitive.max_width,
+    );
+    let line_step = (primitive.font_size * primitive.line_height) as f32;
+    let max_width = primitive.max_width.unwrap_or(f64::INFINITY) as f32;
+
+    for (index, line) in lines.iter().enumerate() {
+        let width = font.measure_str(line.as_str(), Some(paint)).0;
+        let x = aligned_x(
+            primitive.origin.x as f32 + offset_x as f32,
+            width,
+            max_width,
+            primitive.align.as_deref(),
+        );
+        let y = primitive.origin.y as f32 + offset_y as f32 + line_step * index as f32;
+        canvas.draw_str(line.as_str(), (x, y), font, paint);
+    }
+}
+
+fn aligned_x(origin_x: f32, line_width: f32, max_width: f32, align: Option<&str>) -> f32 {
+    if !max_width.is_finite() {
+        return origin_x;
+    }
+
+    match align.unwrap_or("left") {
+        "center" => origin_x + ((max_width - line_width) * 0.5).max(0.0),
+        "right" => origin_x + (max_width - line_width).max(0.0),
+        _ => origin_x,
+    }
+}
+
+fn wrap_text_lines(text: &str, font_size: f64, max_width: Option<f64>) -> Vec<String> {
+    let approx_char_width = (font_size * 0.6).max(1.0);
+    let max_chars = max_width
+        .map(|width| (width / approx_char_width).floor() as usize)
+        .filter(|chars| *chars > 0);
+
+    let mut lines = Vec::new();
+    for raw_line in text.lines() {
+        if let Some(limit) = max_chars {
+            lines.extend(wrap_single_line(raw_line, limit));
+        } else {
+            lines.push(raw_line.to_string());
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn wrap_single_line(line: &str, max_chars: usize) -> Vec<String> {
+    if line.chars().count() <= max_chars {
+        return vec![line.to_string()];
+    }
+
+    let words = line.split_whitespace().collect::<Vec<_>>();
+    if words.is_empty() {
+        let chars = line.chars().collect::<Vec<_>>();
+        return chars
+            .chunks(max_chars)
+            .map(|chunk| chunk.iter().collect())
+            .collect();
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in words {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+
+        if candidate.chars().count() <= max_chars {
+            current = candidate;
+        } else {
+            if !current.is_empty() {
+                lines.push(current);
+            }
+            if word.chars().count() <= max_chars {
+                current = word.to_string();
+            } else {
+                let chars = word.chars().collect::<Vec<_>>();
+                for chunk in chars.chunks(max_chars) {
+                    lines.push(chunk.iter().collect());
+                }
+                current = String::new();
+            }
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
 }
 
 fn parse_color(background: &RenderBackground) -> Color {

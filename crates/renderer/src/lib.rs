@@ -76,6 +76,9 @@ pub struct TextPrimitive {
     pub text: String,
     pub font_size: f64,
     pub font_family: Option<String>,
+    pub line_height: f64,
+    pub max_width: Option<f64>,
+    pub align: Option<String>,
     pub fill: Option<String>,
 }
 
@@ -224,6 +227,9 @@ fn text_primitive(node: &SceneNode) -> Option<TextPrimitive> {
         text: params.text,
         font_size: params.font_size,
         font_family: params.font_family,
+        line_height: params.line_height,
+        max_width: params.max_width,
+        align: params.align,
         fill: node.style_fill(),
     })
 }

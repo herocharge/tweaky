@@ -360,6 +360,7 @@ Current status:
 - selected `Rectangle`, `Ellipse`, and `ImageLayer` nodes now support corner-handle resizing on the canvas, giving Milestone 3 its first direct geometry-edit affordance
 - editor edits now have lightweight undo/redo history, and `Text` nodes have a dedicated edit path through double-click content editing and keyboard font-size adjustments
 - selected `Path` nodes now support direct point manipulation on the canvas, and text editing has expanded to include line-height stepping for multiline layout tuning
+- text layout settings are now meaningful beyond raw JSON storage: `lineHeight`, `maxWidth`, and `align` affect runtime bounds, Qt preview, Rust render plans, and Skia export
 - Remaining milestone work is primarily interactivity and document lifecycle, not shell bootstrap
 
 ## Milestone 4: AI Integration

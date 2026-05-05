@@ -147,6 +147,8 @@ pub struct TextParams {
     pub font_size: f64,
     pub font_family: Option<String>,
     pub line_height: f64,
+    pub max_width: Option<f64>,
+    pub align: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -179,6 +181,8 @@ impl SceneNode {
             font_size: get_number(&self.params, "fontSize").unwrap_or(16.0),
             font_family: get_string(&self.params, "fontFamily"),
             line_height: get_number(&self.params, "lineHeight").unwrap_or(1.2),
+            max_width: get_number(&self.params, "maxWidth"),
+            align: get_string(&self.params, "align"),
         })
     }
 
@@ -377,6 +381,63 @@ mod tests {
     const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
     const SHAPES_STUDY: &str = include_str!("../../../examples/shapes_study.vsd.json");
     const HYBRID_SCENE: &str = include_str!("../../../examples/hybrid_scene.vsd.json");
+    const TYPED_PARAMS_SCENE: &str = r##"
+{
+  "version": "0.1",
+  "document": {
+    "id": "doc_typed_params",
+    "name": "typed params",
+    "width": 800,
+    "height": 600,
+    "background": { "type": "solid", "color": "#ffffff" },
+    "resources": { "images": {}, "fonts": {}, "palettes": {} },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blendMode": "normal",
+      "transform": { "x": 0, "y": 0, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+      "params": {},
+      "style": {},
+      "children": [
+        {
+          "id": "rect",
+          "type": "Rectangle",
+          "name": "Rect",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": { "x": 10, "y": 20, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+          "params": { "width": 320, "height": 180, "cornerRadius": 12 },
+          "style": {},
+          "children": []
+        },
+        {
+          "id": "text",
+          "type": "Text",
+          "name": "Text",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": { "x": 100, "y": 120, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+          "params": {
+            "text": "Hello layout",
+            "fontSize": 42,
+            "fontFamily": "Inter",
+            "lineHeight": 1.3,
+            "maxWidth": 280,
+            "align": "center"
+          },
+          "style": {},
+          "children": []
+        }
+      ]
+    }
+  }
+}
+"##;
 
     #[test]
     fn parses_example_documents() {
@@ -426,25 +487,28 @@ mod tests {
 
     #[test]
     fn exposes_typed_rectangle_params() {
-        let parsed = parse_scene_str(BASIC_POSTER).expect("example scene should parse");
+        let parsed = parse_scene_str(TYPED_PARAMS_SCENE).expect("scene should parse");
         let params = parsed.document.root.children[0]
             .rectangle_params()
             .expect("rectangle params should exist");
 
-        assert_eq!(params.width, 1360.0);
-        assert_eq!(params.corner_radius, 28.0);
+        assert_eq!(params.width, 320.0);
+        assert_eq!(params.corner_radius, 12.0);
     }
 
     #[test]
     fn exposes_typed_text_params() {
-        let parsed = parse_scene_str(BASIC_POSTER).expect("example scene should parse");
+        let parsed = parse_scene_str(TYPED_PARAMS_SCENE).expect("scene should parse");
         let params = parsed.document.root.children[1]
             .text_params()
             .expect("text params should exist");
 
-        assert_eq!(params.text, "TWEAK EVERYTHING");
-        assert_eq!(params.font_size, 84.0);
+        assert_eq!(params.text, "Hello layout");
+        assert_eq!(params.font_size, 42.0);
         assert_eq!(params.font_family.as_deref(), Some("Inter"));
+        assert_eq!(params.line_height, 1.3);
+        assert_eq!(params.max_width, Some(280.0));
+        assert_eq!(params.align.as_deref(), Some("center"));
     }
 
     #[test]
