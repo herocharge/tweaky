@@ -69,6 +69,7 @@ AI provider notes:
 - `.env` files are ignored, and [.env.example](./.env.example) shows the expected shape
 - current CLI/env provider knobs are `TWEAKY_AI_PROVIDER`, `TWEAKY_AI_MODEL`, `TWEAKY_AI_FALLBACK_MODELS`, `TWEAKY_AI_API_KEY_ENV`, and `TWEAKY_AI_BASE_URL`
 - the Gemini path now falls back from `gemini-2.5-flash` to `gemini-3.1-flash-lite-preview` on transient capacity errors like `UNAVAILABLE`
+- the Gemini path now also uses repo-native few-shot examples and one retry-with-feedback pass when the model returns malformed scene output
 
 Chosen stack:
 
@@ -85,4 +86,4 @@ Current project phase:
 - Milestone 1 complete
 - Milestone 2 functionally complete for the current MVP scope
 - Milestone 3 active with a real editor app scaffold, a compiled Qt shell prototype, a Rust-owned view-model boundary for hierarchy/inspector/canvas preview data, working Qt open/reload/save/save-as/export document actions, a temp working-copy edit loop with dirty-state tracking and undo/redo, keyboard nudging plus corner-handle resizing for simple bound-based nodes, direct path-point editing, and text layout support that now reaches preview/export via `lineHeight`, `maxWidth`, and `align`
-- Milestone 4 now has a live Gemini prompt-to-scene path plus a mock fallback through the same provider interface
+- Milestone 4 now has a live Gemini prompt-to-scene path with fallback, few-shot prompting, repair retries, and a mock path through the same provider interface

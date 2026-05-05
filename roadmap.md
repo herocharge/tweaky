@@ -436,6 +436,7 @@ Current status:
 - `examples/pelican_bicycle.vsd.json` exists as the first benchmark scene
 - `crates/ai_adapter` now supports live Gemini prompt-to-scene generation, canned prompt routing, schema validation, and provider configuration seams
 - the live Gemini path now supports a fallback model chain for transient provider capacity failures
+- the live Gemini path now includes few-shot prompting from repo examples plus a retry-with-feedback repair pass
 - `editor` CLI can generate from a prompt while selecting provider/model/key-env overrides
 
 Risks:

@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 const PELICAN_BICYCLE: &str = include_str!("../../../examples/pelican_bicycle.vsd.json");
 const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
+const HYBRID_SCENE: &str = include_str!("../../../examples/hybrid_scene.vsd.json");
 const SCENE_DOCUMENT_SCHEMA: &str = include_str!("../../../schemas/scene-document.schema.json");
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_GEMINI_FALLBACK_MODEL: &str = "gemini-3.1-flash-lite-preview";
@@ -337,12 +338,26 @@ fn validate_generated_response(
         .document
         .clone()
         .ok_or(AiAdapterError::MissingDocument)?;
-    let issues = validate_scene(&document);
+    let mut issues = validate_scene(&document);
+    issues.extend(validate_generated_scene_quality(&document));
     if !issues.is_empty() {
         return Err(AiAdapterError::InvalidDocument(issues));
     }
 
     Ok(GeneratedScene { response, issues })
+}
+
+fn validate_generated_scene_quality(scene: &SceneFile) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+
+    if scene.document.root.children.is_empty() {
+        issues.push(ValidationIssue {
+            path: "document.root.children".to_string(),
+            message: "generated scene must contain at least one child node under the root".to_string(),
+        });
+    }
+
+    issues
 }
 
 fn mock_response_for_prompt(prompt: &str) -> Result<AiSceneResponse, AiAdapterError> {
@@ -407,18 +422,33 @@ fn generate_gemini_scene_with_fallback(
 ) -> Result<GeneratedScene, AiAdapterError> {
     let mut last_error = None;
     for model in gemini_model_attempts(config) {
-        match request_gemini_scene(config, api_key, prompt, &model) {
-            Ok(response) => match validate_generated_response(response) {
-                Ok(generated) => return Ok(generated),
-                Err(error) if is_retryable_gemini_error(&error) => {
+        let mut repair_feedback = None;
+
+        for _ in 0..2 {
+            match request_gemini_scene(config, api_key, prompt, &model, repair_feedback.as_deref())
+            {
+                Ok(response) => match validate_generated_response(response) {
+                    Ok(generated) => return Ok(generated),
+                    Err(error) if should_retry_same_model_with_feedback(&error, &repair_feedback) => {
+                        repair_feedback = Some(build_repair_feedback(&error));
+                        last_error = Some(error);
+                    }
+                    Err(error) if is_retryable_gemini_error(&error) => {
+                        last_error = Some(error);
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                },
+                Err(error) if should_retry_same_model_with_feedback(&error, &repair_feedback) => {
+                    repair_feedback = Some(build_repair_feedback(&error));
                     last_error = Some(error);
                 }
+                Err(error) if is_retryable_gemini_error(&error) => {
+                    last_error = Some(error);
+                    break;
+                }
                 Err(error) => return Err(error),
-            },
-            Err(error) if is_retryable_gemini_error(&error) => {
-                last_error = Some(error);
             }
-            Err(error) => return Err(error),
         }
     }
 
@@ -432,6 +462,7 @@ fn request_gemini_scene(
     api_key: &str,
     prompt: &str,
     model: &str,
+    repair_feedback: Option<&str>,
 ) -> Result<AiSceneResponse, AiAdapterError> {
     let endpoint = gemini_endpoint(config, model);
     let request = GeminiGenerateContentRequest {
@@ -442,7 +473,7 @@ fn request_gemini_scene(
         },
         contents: vec![GeminiContent {
             parts: vec![GeminiTextPart {
-                text: gemini_user_prompt(prompt),
+                text: gemini_user_prompt(prompt, repair_feedback),
             }],
         }],
         generation_config: GeminiGenerationConfig {
@@ -569,6 +600,8 @@ fn gemini_system_instruction(model: &str) -> String {
             "Return an object with keys mode, summary, document, and notes.\n",
             "mode must be full_document.\n",
             "document must be a complete tweaky scene JSON document that follows this schema.\n",
+            "Do not return placeholders, empty documents, or empty root children arrays.\n",
+            "The root group must contain multiple meaningful drawable child nodes.\n",
             "Do not include markdown fences or prose outside JSON.\n",
             "Prefer the node types Group, Rectangle, Ellipse, Path, Text, and ImageLayer.\n",
             "Use named nodes, stable ids, explicit transforms, and editable structure.\n",
@@ -580,7 +613,20 @@ fn gemini_system_instruction(model: &str) -> String {
     )
 }
 
-fn gemini_user_prompt(prompt: &str) -> String {
+fn gemini_user_prompt(prompt: &str, repair_feedback: Option<&str>) -> String {
+    let repair_block = repair_feedback
+        .map(|feedback| {
+            format!(
+                concat!(
+                    "\nRepair feedback from the previous attempt:\n",
+                    "{}\n",
+                    "Fix that issue directly in this attempt.\n"
+                ),
+                feedback
+            )
+        })
+        .unwrap_or_default();
+
     format!(
         concat!(
             "Create a new tweaky scene document for this request:\n",
@@ -588,10 +634,19 @@ fn gemini_user_prompt(prompt: &str) -> String {
             "Canvas guidance:\n",
             "- use a reasonable poster-like canvas size\n",
             "- include a complete root hierarchy\n",
+            "- the root must include multiple non-empty drawable child nodes\n",
+            "- do not leave `children` empty and do not return a placeholder scene\n",
             "- keep the result funny, editable, and visually readable\n",
-            "- notes should briefly explain key scene construction choices\n"
+            "- notes should briefly explain key scene construction choices\n\n",
+            "Here are valid example tweaky scenes. Match their structural completeness and naming quality.\n\n",
+            "Example 1: playful structured poster\n{}\n\n",
+            "Example 2: hybrid structured plus raster scene\n{}\n",
+            "{}"
         ),
         prompt
+        , PELICAN_BICYCLE
+        , HYBRID_SCENE
+        , repair_block
     )
 }
 
@@ -660,6 +715,47 @@ fn is_retryable_gemini_error(error: &AiAdapterError) -> bool {
     }
 }
 
+fn should_retry_same_model_with_feedback(
+    error: &AiAdapterError,
+    repair_feedback: &Option<String>,
+) -> bool {
+    if repair_feedback.is_some() {
+        return false;
+    }
+
+    matches!(
+        error,
+        AiAdapterError::ParseFailed(_)
+            | AiAdapterError::MissingDocument
+            | AiAdapterError::InvalidDocument(_)
+    )
+}
+
+fn build_repair_feedback(error: &AiAdapterError) -> String {
+    match error {
+        AiAdapterError::ParseFailed(message) => format!(
+            concat!(
+                "Your previous JSON could not be parsed into a valid tweaky response. ",
+                "Return strict JSON only and ensure the `document` field is a complete scene document. ",
+                "Parser message: {}"
+            ),
+            message
+        ),
+        AiAdapterError::MissingDocument => {
+            "Your previous response omitted the `document` field. Return a full scene document in the `document` key.".to_string()
+        }
+        AiAdapterError::InvalidDocument(issues) => format!(
+            concat!(
+                "Your previous scene document failed validation. ",
+                "Return a complete valid tweaky scene document with all required fields and compatible node properties. ",
+                "Validation issues: {:?}"
+            ),
+            issues
+        ),
+        other => format!("Repair the previous attempt. Error: {other}"),
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct GeminiGenerateContentRequest {
     system_instruction: GeminiContent,
@@ -724,7 +820,7 @@ mod tests {
     use super::{
         AiAdapterError, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL, GeneratedScene,
         ProviderConfig, ProviderKind, ResponseMode, gemini_endpoint, gemini_model_attempts,
-        generate_scene_from_prompt_with_config, parse_ai_scene_response,
+        gemini_user_prompt, generate_scene_from_prompt_with_config, parse_ai_scene_response,
     };
     use std::env;
 
@@ -861,5 +957,17 @@ mod tests {
             response.document.expect("document should exist").version,
             "0.1"
         );
+    }
+
+    #[test]
+    fn gemini_prompt_includes_examples_and_feedback() {
+        let prompt = gemini_user_prompt(
+            "a drawing of a pelican riding a bicycle",
+            Some("missing document"),
+        );
+
+        assert!(prompt.contains("Example 1: playful structured poster"));
+        assert!(prompt.contains("Example 2: hybrid structured plus raster scene"));
+        assert!(prompt.contains("missing document"));
     }
 }
