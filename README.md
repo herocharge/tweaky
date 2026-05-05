@@ -8,6 +8,7 @@ Current project docs:
 - [thoughts.md](./thoughts.md): product idea and conceptual framing
 - [spec.md](./spec.md): MVP specification and architecture direction
 - [roadmap.md](./roadmap.md): milestone-by-milestone execution plan
+- [docs/editor-shell.md](./docs/editor-shell.md): first editor-shell boundary for Milestone 3
 
 Current implementation artifacts:
 
@@ -59,4 +60,4 @@ Current project phase:
 
 - Milestone 1 complete
 - Milestone 2 functionally complete for the current MVP scope
-- Next focus: Milestone 3 editor shell
+- Milestone 3 started with a real editor app scaffold

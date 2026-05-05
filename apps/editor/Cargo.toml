@@ -3,5 +3,13 @@ name = "editor"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["skia-safe-backend"]
+skia-safe-backend = ["renderer/skia-safe-backend"]
+qt-shell = []
+
 [dependencies]
+serde_json.workspace = true
 scene_schema = { path = "../../crates/scene_schema" }
+scene_runtime = { path = "../../crates/scene_runtime" }
+renderer = { path = "../../crates/renderer", default-features = false }

@@ -527,6 +527,12 @@ Avoid:
 3. Add the smallest viable editor workflow that can load and render an example scene
 4. Keep pushing work to `origin/main` as focused commits land
 
+Current status:
+
+- Milestone 3 has started
+- The editor app now has a real non-Qt state/workflow scaffold
+- The next architectural step is a canvas-host boundary, not more renderer work
+
 Current leaning:
 
 - Keep the document wire format generic for MVP

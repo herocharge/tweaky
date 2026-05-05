@@ -100,6 +100,7 @@ Currently implemented:
 - Basic `Path` support now exists end-to-end through typed params, runtime bounds, render planning, and Skia drawing
 - Closed `Path` nodes now participate in polygon-aware hit testing instead of only bounding-box selection
 - Style-level `blur` and `shadow` effects now affect bounds and Skia rendering
+- `editor` now has a real app-state scaffold, CLI loading path, hierarchy summary, and PNG export workflow
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
@@ -110,8 +111,8 @@ Currently implemented:
 
 Expected next implementation step:
 
-- Begin Milestone 3 with the editor shell scaffold
 - Choose the first Qt integration shape for hierarchy, canvas host, and inspector surfaces
+- Add the first canvas-host abstraction and document-open workflow boundaries that a future Qt shell can call into
 - Keep renderer/runtime boundaries stable while the desktop shell comes online
 
 ## Intended Repo Shape
@@ -199,10 +200,10 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Scaffold the editor application architecture around Qt
-2. Define the first canvas host boundary between the desktop shell and renderer
-3. Add minimal document-open/render workflow inside the editor app
-4. Add hierarchy and inspector placeholders with real scene data plumbing
+1. Define the first canvas host boundary between the desktop shell and renderer
+2. Add hierarchy and inspector-facing view-model slices to the editor app layer
+3. Preserve the current CLI/editor app workflow as a smoke-test path
+4. Wire in the real Qt shell once the platform/tooling boundary is ready
 5. Commit and push each slice separately
 
 ## Notes For Future Codex Sessions
