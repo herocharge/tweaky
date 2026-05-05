@@ -392,6 +392,7 @@ Detailed tasks:
 - Response parser
 - Validation bridge
 - Mock/canned generation path for workflow testing before live model wiring
+- Provider abstraction so users can supply their own API key or extend the backend
 - Repair pipeline
 - Error reporting
 
@@ -433,8 +434,8 @@ Current status:
 
 - `docs/ai-contract.md` exists and defines the first prompt/document/patch contract
 - `examples/pelican_bicycle.vsd.json` exists as the first benchmark scene
-- `crates/ai_adapter` now supports canned prompt routing and schema validation
-- `editor` CLI can generate a mock scene from a prompt and optionally write it to disk
+- `crates/ai_adapter` now supports canned prompt routing, schema validation, and provider configuration seams
+- `editor` CLI can generate from a prompt while selecting provider/model/key-env overrides
 
 Risks:
 

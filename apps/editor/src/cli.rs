@@ -2,8 +2,12 @@ use std::path::PathBuf;
 
 pub struct CliOptions {
     pub scene_path: PathBuf,
-    pub mock_prompt: Option<String>,
+    pub prompt: Option<String>,
     pub write_generated_path: Option<PathBuf>,
+    pub ai_provider: Option<String>,
+    pub ai_model: Option<String>,
+    pub ai_api_key_env: Option<String>,
+    pub ai_base_url: Option<String>,
     pub export_path: Option<PathBuf>,
     pub dump_view_model: bool,
     pub rename_node: Option<RenameNodeOptions>,
@@ -35,8 +39,12 @@ impl CliOptions {
         let _program = args.next();
 
         let mut scene_path = PathBuf::from("examples/basic_poster.vsd.json");
-        let mut mock_prompt = None;
+        let mut prompt = None;
         let mut write_generated_path = None;
+        let mut ai_provider = None;
+        let mut ai_model = None;
+        let mut ai_api_key_env = None;
+        let mut ai_base_url = None;
         let mut export_path = None;
         let mut dump_view_model = false;
         let mut rename_node = None;
@@ -53,17 +61,41 @@ impl CliOptions {
                         .ok_or_else(|| "--export requires a file path".to_string())?;
                     export_path = Some(PathBuf::from(path));
                 }
-                "--mock-prompt" => {
-                    let prompt = args
+                "--prompt" | "--mock-prompt" => {
+                    let value = args
                         .next()
-                        .ok_or_else(|| "--mock-prompt requires a prompt string".to_string())?;
-                    mock_prompt = Some(prompt);
+                        .ok_or_else(|| format!("{arg} requires a prompt string"))?;
+                    prompt = Some(value);
                 }
                 "--write-generated" => {
                     let path = args
                         .next()
                         .ok_or_else(|| "--write-generated requires a file path".to_string())?;
                     write_generated_path = Some(PathBuf::from(path));
+                }
+                "--ai-provider" => {
+                    let provider = args
+                        .next()
+                        .ok_or_else(|| "--ai-provider requires a provider name".to_string())?;
+                    ai_provider = Some(provider);
+                }
+                "--ai-model" => {
+                    let model = args
+                        .next()
+                        .ok_or_else(|| "--ai-model requires a model name".to_string())?;
+                    ai_model = Some(model);
+                }
+                "--ai-api-key-env" => {
+                    let env_var = args.next().ok_or_else(|| {
+                        "--ai-api-key-env requires an environment variable name".to_string()
+                    })?;
+                    ai_api_key_env = Some(env_var);
+                }
+                "--ai-base-url" => {
+                    let base_url = args
+                        .next()
+                        .ok_or_else(|| "--ai-base-url requires a URL".to_string())?;
+                    ai_base_url = Some(base_url);
                 }
                 "--qt" => {
                     qt_shell_requested = true;
@@ -128,8 +160,12 @@ impl CliOptions {
 
         Ok(Self {
             scene_path,
-            mock_prompt,
+            prompt,
             write_generated_path,
+            ai_provider,
+            ai_model,
+            ai_api_key_env,
+            ai_base_url,
             export_path,
             dump_view_model,
             rename_node,
@@ -143,14 +179,16 @@ impl CliOptions {
     pub fn usage() -> String {
         [
             "Usage:",
-            "  cargo run -p editor -- [scene-path] [--mock-prompt text] [--write-generated output.vsd.json] [--export output.png] [--dump-view-model] [--rename-node node-id new-name] [--set-position node-id x y] [--set-params-json node-id json] [--set-style-json node-id json] [--qt]",
+            "  cargo run -p editor -- [scene-path] [--prompt text] [--ai-provider name] [--ai-model model] [--ai-api-key-env ENV_VAR] [--ai-base-url url] [--write-generated output.vsd.json] [--export output.png] [--dump-view-model] [--rename-node node-id new-name] [--set-position node-id x y] [--set-params-json node-id json] [--set-style-json node-id json] [--qt]",
             "",
             "Defaults:",
             "  scene-path = examples/basic_poster.vsd.json",
             "",
             "Notes:",
             "  --dump-view-model prints the editor-facing JSON payload used by the Qt shell",
-            "  --mock-prompt routes through the canned AI adapter instead of reading an input scene path",
+            "  --prompt routes through the configured AI adapter instead of reading an input scene path",
+            "  --ai-provider accepts mock, gemini, or openai-compatible",
+            "  --mock-prompt is kept as a compatibility alias for --prompt",
             "  --write-generated saves the AI-produced document before continuing",
             "  edit flags write changes back to the scene path before continuing",
             "  json flags expect a full JSON object string like {\"fill\":\"#dd6b42\"}",
@@ -200,7 +238,7 @@ mod tests {
         assert!(options.set_params_json.is_none());
         assert!(options.set_style_json.is_none());
         assert!(options.qt_shell_requested);
-        assert!(options.mock_prompt.is_none());
+        assert!(options.prompt.is_none());
         assert!(options.write_generated_path.is_none());
     }
 
@@ -266,20 +304,32 @@ mod tests {
     }
 
     #[test]
-    fn parses_mock_prompt_flags() {
+    fn parses_prompt_provider_flags() {
         let options = CliOptions::parse(vec![
             "editor".to_string(),
-            "--mock-prompt".to_string(),
+            "--prompt".to_string(),
             "a drawing of a pelican riding a bicycle".to_string(),
+            "--ai-provider".to_string(),
+            "gemini".to_string(),
+            "--ai-model".to_string(),
+            "gemini-2.5-flash".to_string(),
+            "--ai-api-key-env".to_string(),
+            "GEMINI_API_KEY".to_string(),
+            "--ai-base-url".to_string(),
+            "https://example.com".to_string(),
             "--write-generated".to_string(),
             "out.vsd.json".to_string(),
         ])
         .expect("parse should work");
 
         assert_eq!(
-            options.mock_prompt.as_deref(),
+            options.prompt.as_deref(),
             Some("a drawing of a pelican riding a bicycle")
         );
+        assert_eq!(options.ai_provider.as_deref(), Some("gemini"));
+        assert_eq!(options.ai_model.as_deref(), Some("gemini-2.5-flash"));
+        assert_eq!(options.ai_api_key_env.as_deref(), Some("GEMINI_API_KEY"));
+        assert_eq!(options.ai_base_url.as_deref(), Some("https://example.com"));
         assert_eq!(
             options
                 .write_generated_path

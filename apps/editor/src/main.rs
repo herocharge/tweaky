@@ -2,10 +2,11 @@ mod app;
 mod cli;
 mod qt_shell;
 
-use ai_adapter::generate_scene_from_prompt;
+use ai_adapter::{ProviderConfig, ProviderKind, generate_scene_from_prompt_with_config};
 use app::EditorApp;
 use cli::{CliOptions, NodeJsonEdit, NodePositionEdit, RenameNodeOptions};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 fn main() {
     if let Err(message) = run() {
@@ -21,8 +22,10 @@ fn run() -> Result<(), String> {
         || options.set_params_json.is_some()
         || options.set_style_json.is_some();
     let mut active_scene_path = options.scene_path.clone();
-    let mut app = if let Some(prompt) = &options.mock_prompt {
-        let generated = generate_scene_from_prompt(prompt).map_err(|error| error.to_string())?;
+    let mut app = if let Some(prompt) = &options.prompt {
+        let config = build_provider_config(&options)?;
+        let generated = generate_scene_from_prompt_with_config(&config, prompt)
+            .map_err(|error| error.to_string())?;
         let path = options
             .write_generated_path
             .clone()
@@ -122,4 +125,23 @@ fn parse_json_object(
         .as_object()
         .cloned()
         .ok_or_else(|| format!("{flag_name} expected a JSON object"))
+}
+
+fn build_provider_config(options: &CliOptions) -> Result<ProviderConfig, String> {
+    let mut config = ProviderConfig::from_env().map_err(|error| error.to_string())?;
+    if let Some(value) = &options.ai_provider {
+        let provider = ProviderKind::from_str(value).map_err(|error| error.to_string())?;
+        config = ProviderConfig::for_provider(provider);
+    }
+    if let Some(model) = &options.ai_model {
+        config = config.with_model(model.clone());
+    }
+    if let Some(env_var) = &options.ai_api_key_env {
+        config = config.with_api_key_env_var(env_var.clone());
+    }
+    if let Some(base_url) = &options.ai_base_url {
+        config = config.with_base_url(base_url.clone());
+    }
+
+    Ok(config)
 }

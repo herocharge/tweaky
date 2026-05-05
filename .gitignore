@@ -5,6 +5,11 @@
 .idea/
 .vscode/
 
+# Local environment
+.env
+.env.*
+!.env.example
+
 # Rust
 target/
 Cargo.lock

@@ -19,7 +19,7 @@ Current implementation artifacts:
 - [crates/scene_schema](./crates/scene_schema): Rust parsing and validation crate
 - [crates/scene_runtime](./crates/scene_runtime): runtime registry, traversal, mutation commands, and shared geometry/bounds helpers
 - [crates/renderer](./crates/renderer): backend-agnostic render plan and optional Skia CPU raster backend, now consuming runtime geometry semantics
-- [crates/ai_adapter](./crates/ai_adapter): mock AI generation adapter with canned prompt routing and schema validation
+- [crates/ai_adapter](./crates/ai_adapter): provider abstraction for AI generation, with a mock backend plus Gemini/openai-compatible configuration seams
 - [Cargo.toml](./Cargo.toml): workspace root
 - [apps/editor/qt_shell](./apps/editor/qt_shell): Qt Widgets desktop shell prototype
 
@@ -47,7 +47,8 @@ Useful editor commands:
 
 - `cargo run -p editor -- examples/basic_poster.vsd.json --export /tmp/tweaky-editor-smoke.png`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --dump-view-model`
-- `cargo run -p editor -- --mock-prompt "a drawing of a pelican riding a bicycle" --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
+- `cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider mock --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
+- `cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider gemini --ai-model gemini-2.5-flash --ai-api-key-env GEMINI_API_KEY --write-generated /tmp/pelican.vsd.json`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --rename-node headline "Title Block"`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --set-position headline 320 360 --set-params-json headline '{"text":"JSON MODE","fontFamily":"Inter","fontSize":72,"lineHeight":1.0}' --set-style-json headline '{"fill":"#445566"}'`
 - `cmake -S apps/editor/qt_shell -B build/qt_shell -DCMAKE_PREFIX_PATH=$(brew --prefix qt)`
@@ -60,6 +61,13 @@ Architecture direction:
 - built-in component library
 - pluggable renderer backends
 - external generators/adapters that target the same IR
+- a provider abstraction for model backends; OpenAI-compatible APIs are a useful extension target, but not treated as the native contract
+
+AI provider notes:
+
+- put secrets in local env vars or a local `.env`, never in committed config
+- `.env` files are ignored, and [.env.example](./.env.example) shows the expected shape
+- current CLI/env provider knobs are `TWEAKY_AI_PROVIDER`, `TWEAKY_AI_MODEL`, `TWEAKY_AI_API_KEY_ENV`, and `TWEAKY_AI_BASE_URL`
 
 Chosen stack:
 

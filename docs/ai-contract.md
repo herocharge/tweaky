@@ -2,6 +2,12 @@
 
 This document defines the first practical AI integration contract for `tweaky`.
 
+Provider note:
+
+- There is no single universal multimodal provider standard that cleanly covers scene-JSON generation, image understanding, structured outputs, and revision flows all at once.
+- `tweaky` should keep its own provider abstraction around scene generation.
+- OpenAI-compatible APIs are a useful extension target, but not the app's native contract.
+
 The goal is not "prompt to final bitmap."
 
 The goal is:

@@ -114,7 +114,7 @@ Currently implemented:
 - shared text layout now supports `lineHeight`, `maxWidth`, and `align` end-to-end across schema parsing, runtime bounds, Qt preview, Rust view models, and Skia PNG export
 - `docs/ai-contract.md` now defines the first AI prompt/document/patch contract
 - `examples/pelican_bicycle.vsd.json` now serves as the first funny benchmark scene for "a drawing of a pelican riding a bicycle"
-- `ai_adapter` now has a real mock generation path with canned prompt routing, typed response envelopes, and schema validation
+- `ai_adapter` now has a provider abstraction with a real mock generation path, typed response envelopes, and extension seams for Gemini or openai-compatible backends
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`
@@ -198,7 +198,8 @@ When code exists, verification should usually include the following where releva
 - If touching Skia integration, run `cargo test -p renderer --features skia-safe-backend`
 - If touching the Qt shell boundary, rebuild `build/qt_shell` and smoke-launch `tweaky-editor-qt`
 - If touching the mock AI path, run `cargo test -p ai_adapter -p editor`
-- Smoke-test canned generation with `cargo run -p editor -- --mock-prompt "a drawing of a pelican riding a bicycle" --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
+- Smoke-test canned generation with `cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider mock --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
+- Keep secrets in ignored local env files or shell env vars, not committed configs
 
 For documentation-only changes:
 
@@ -219,7 +220,7 @@ The next likely sequence is:
 
 1. Preserve the current CLI/editor app workflow as a smoke-test path
 2. Build from mock AI generation into real scene revision flows
-3. Add editor-side AI affordances once the adapter contract settles
+3. Add live Gemini HTTP integration on top of the provider abstraction
 4. Keep preview/export consistency tightening as the editor matures
 5. Commit and push each slice separately
 
