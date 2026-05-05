@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+
+# Rust
+target/
+Cargo.lock
+
+# Build outputs
+dist/
+build/
+out/
