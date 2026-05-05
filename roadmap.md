@@ -384,6 +384,7 @@ Detailed tasks:
 - Define allowed component vocabulary
 - Define output contract
 - Decide whether AI returns full documents or structured patches first
+- Define one funny benchmark prompt and evaluation rubric
 
 2. AI adapter crate
 
@@ -413,11 +414,13 @@ Detailed tasks:
 - "Move the title higher"
 - "Change the background tone"
 - "Replace painterly area with raster layer"
+- "Draw a pelican riding a bicycle"
 
 Deliverables:
 
 - AI prompt flow inside editor
 - Valid generated scene documents
+- One benchmark scene and prompt contract that can be regression-tested over time
 - Repair and error handling path
 
 Exit criteria:

@@ -77,6 +77,7 @@ These are current project decisions and should be treated as default assumptions
 - [thoughts.md](/Users/herocharge/fun/draw/thoughts.md)
 - [spec.md](/Users/herocharge/fun/draw/spec.md)
 - [roadmap.md](/Users/herocharge/fun/draw/roadmap.md)
+- [docs/ai-contract.md](/Users/herocharge/fun/draw/docs/ai-contract.md)
 
 Recommended reading order for reload:
 
@@ -111,6 +112,8 @@ Currently implemented:
 - the Qt shell now keeps lightweight snapshot history for undo/redo over the working copy, and selected `Text` nodes support double-click content editing plus keyboard font-size stepping
 - selected `Path` nodes now expose draggable point handles on the canvas, and selected text nodes support line-height stepping in addition to content/font-size editing
 - shared text layout now supports `lineHeight`, `maxWidth`, and `align` end-to-end across schema parsing, runtime bounds, Qt preview, Rust view models, and Skia PNG export
+- `docs/ai-contract.md` now defines the first AI prompt/document/patch contract
+- `examples/pelican_bicycle.vsd.json` now serves as the first funny benchmark scene for "a drawing of a pelican riding a bicycle"
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold

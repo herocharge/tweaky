@@ -9,11 +9,13 @@ Current project docs:
 - [spec.md](./spec.md): MVP specification and architecture direction
 - [roadmap.md](./roadmap.md): milestone-by-milestone execution plan
 - [docs/editor-shell.md](./docs/editor-shell.md): first editor-shell boundary for Milestone 3
+- [docs/ai-contract.md](./docs/ai-contract.md): first AI generation and revision contract
 
 Current implementation artifacts:
 
 - [schemas/scene-document.schema.json](./schemas/scene-document.schema.json): JSON Schema for scene document version `0.1`
 - [examples](./examples): hand-authored example `.vsd.json` scene documents
+- [examples/pelican_bicycle.vsd.json](./examples/pelican_bicycle.vsd.json): first AI benchmark scene around "a drawing of a pelican riding a bicycle"
 - [crates/scene_schema](./crates/scene_schema): Rust parsing and validation crate
 - [crates/scene_runtime](./crates/scene_runtime): runtime registry, traversal, mutation commands, and shared geometry/bounds helpers
 - [crates/renderer](./crates/renderer): backend-agnostic render plan and optional Skia CPU raster backend, now consuming runtime geometry semantics

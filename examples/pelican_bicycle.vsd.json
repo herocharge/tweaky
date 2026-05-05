@@ -1,0 +1,578 @@
+{
+  "version": "0.1",
+  "document": {
+    "id": "doc_pelican_bicycle",
+    "name": "Pelican Riding a Bicycle",
+    "width": 1400,
+    "height": 900,
+    "background": {
+      "type": "solid",
+      "color": "#f7f1df"
+    },
+    "resources": {
+      "images": {},
+      "fonts": {},
+      "palettes": {}
+    },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blendMode": "normal",
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "scaleX": 1,
+        "scaleY": 1,
+        "rotation": 0,
+        "opacity": 1
+      },
+      "params": {},
+      "style": {},
+      "children": [
+        {
+          "id": "background_card",
+          "type": "Rectangle",
+          "name": "Background Card",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 60,
+            "y": 70,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "width": 1280,
+            "height": 760,
+            "cornerRadius": 36
+          },
+          "style": {
+            "fill": "#fff8ec"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "ground_shadow",
+          "type": "Ellipse",
+          "name": "Ground Shadow",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 350,
+            "y": 680,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 0.35
+          },
+          "params": {
+            "radiusX": 360,
+            "radiusY": 55
+          },
+          "style": {
+            "fill": "#b8a894",
+            "blur": 10
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "rear_wheel",
+          "type": "Ellipse",
+          "name": "Rear Wheel",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 360,
+            "y": 520,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "radiusX": 110,
+            "radiusY": 110
+          },
+          "style": {
+            "fill": "#2f241f"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "rear_wheel_inner",
+          "type": "Ellipse",
+          "name": "Rear Wheel Inner",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 395,
+            "y": 555,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "radiusX": 75,
+            "radiusY": 75
+          },
+          "style": {
+            "fill": "#fff8ec"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "front_wheel",
+          "type": "Ellipse",
+          "name": "Front Wheel",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 820,
+            "y": 520,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "radiusX": 110,
+            "radiusY": 110
+          },
+          "style": {
+            "fill": "#2f241f"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "front_wheel_inner",
+          "type": "Ellipse",
+          "name": "Front Wheel Inner",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 855,
+            "y": 555,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "radiusX": 75,
+            "radiusY": 75
+          },
+          "style": {
+            "fill": "#fff8ec"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "bike_frame",
+          "type": "Path",
+          "name": "Bike Frame",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 380,
+            "y": 400,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "closed": false,
+            "points": [
+              {"x": 0, "y": 130},
+              {"x": 150, "y": 20},
+              {"x": 320, "y": 130},
+              {"x": 150, "y": 130},
+              {"x": 80, "y": 20},
+              {"x": 150, "y": 130},
+              {"x": 200, "y": 0},
+              {"x": 320, "y": 130}
+            ]
+          },
+          "style": {
+            "fill": "#2f241f"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "handlebar",
+          "type": "Path",
+          "name": "Handlebar",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 700,
+            "y": 360,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "closed": false,
+            "points": [
+              {"x": 0, "y": 0},
+              {"x": 55, "y": -35},
+              {"x": 105, "y": -5}
+            ]
+          },
+          "style": {
+            "fill": "#2f241f"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "seat_post",
+          "type": "Path",
+          "name": "Seat Post",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 520,
+            "y": 340,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "closed": false,
+            "points": [
+              {"x": 0, "y": 0},
+              {"x": 0, "y": 70},
+              {"x": 42, "y": 58}
+            ]
+          },
+          "style": {
+            "fill": "#2f241f"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pelican_body",
+          "type": "Ellipse",
+          "name": "Pelican Body",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 480,
+            "y": 210,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": -8,
+            "opacity": 1
+          },
+          "params": {
+            "radiusX": 150,
+            "radiusY": 105
+          },
+          "style": {
+            "fill": "#f3efe6",
+            "shadow": {
+              "color": "#8f8275",
+              "offsetX": 0,
+              "offsetY": 10,
+              "blur": 12
+            }
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pelican_wing",
+          "type": "Path",
+          "name": "Pelican Wing",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 510,
+            "y": 260,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": -10,
+            "opacity": 1
+          },
+          "params": {
+            "closed": true,
+            "points": [
+              {"x": 0, "y": 10},
+              {"x": 120, "y": -40},
+              {"x": 170, "y": 75},
+              {"x": 80, "y": 125},
+              {"x": 10, "y": 60}
+            ]
+          },
+          "style": {
+            "fill": "#d6cec0"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pelican_neck",
+          "type": "Path",
+          "name": "Pelican Neck",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 620,
+            "y": 165,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "closed": false,
+            "points": [
+              {"x": 0, "y": 85},
+              {"x": 18, "y": 35},
+              {"x": 78, "y": 0}
+            ]
+          },
+          "style": {
+            "fill": "#c7bba9"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pelican_head",
+          "type": "Ellipse",
+          "name": "Pelican Head",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 670,
+            "y": 120,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "radiusX": 52,
+            "radiusY": 44
+          },
+          "style": {
+            "fill": "#f3efe6"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pelican_beak",
+          "type": "Path",
+          "name": "Pelican Beak",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 740,
+            "y": 130,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 6,
+            "opacity": 1
+          },
+          "params": {
+            "closed": true,
+            "points": [
+              {"x": 0, "y": 12},
+              {"x": 150, "y": 0},
+              {"x": 138, "y": 36},
+              {"x": 16, "y": 44}
+            ]
+          },
+          "style": {
+            "fill": "#e89c45"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pelican_eye",
+          "type": "Ellipse",
+          "name": "Pelican Eye",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 700,
+            "y": 132,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "radiusX": 6,
+            "radiusY": 6
+          },
+          "style": {
+            "fill": "#2f241f"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pelican_leg_front",
+          "type": "Path",
+          "name": "Front Leg",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 610,
+            "y": 390,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "closed": false,
+            "points": [
+              {"x": 0, "y": 0},
+              {"x": 8, "y": 110},
+              {"x": 92, "y": 145}
+            ]
+          },
+          "style": {
+            "fill": "#e89c45"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pelican_leg_rear",
+          "type": "Path",
+          "name": "Rear Leg",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 545,
+            "y": 395,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "closed": false,
+            "points": [
+              {"x": 0, "y": 0},
+              {"x": 18, "y": 120},
+              {"x": -90, "y": 132}
+            ]
+          },
+          "style": {
+            "fill": "#e89c45"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "title",
+          "type": "Text",
+          "name": "Title",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 120,
+            "y": 112,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "text": "A drawing of a pelican\nriding a bicycle",
+            "fontSize": 58,
+            "fontFamily": "Inter",
+            "lineHeight": 1.05,
+            "maxWidth": 520,
+            "align": "left"
+          },
+          "style": {
+            "fill": "#2f241f",
+            "shadow": {
+              "color": "#cbbfae",
+              "offsetX": 0,
+              "offsetY": 7,
+              "blur": 8
+            }
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "caption",
+          "type": "Text",
+          "name": "Caption",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 920,
+            "y": 720,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "text": "Benchmark prompt courtesy of Simon Willison.",
+            "fontSize": 26,
+            "fontFamily": "Inter",
+            "lineHeight": 1.2,
+            "maxWidth": 360,
+            "align": "right"
+          },
+          "style": {
+            "fill": "#6e5a4d"
+          },
+          "children": [],
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "benchmarkPrompt": "a drawing of a pelican riding a bicycle"
+      }
+    }
+  }
+}
