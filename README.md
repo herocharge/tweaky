@@ -70,6 +70,7 @@ AI provider notes:
 - current CLI/env provider knobs are `TWEAKY_AI_PROVIDER`, `TWEAKY_AI_MODEL`, `TWEAKY_AI_FALLBACK_MODELS`, `TWEAKY_AI_API_KEY_ENV`, and `TWEAKY_AI_BASE_URL`
 - the Gemini path now falls back from `gemini-2.5-flash` to `gemini-3.1-flash-lite-preview` on transient capacity errors like `UNAVAILABLE`
 - the Gemini path now also uses repo-native few-shot examples and one retry-with-feedback pass when the model returns malformed scene output
+- the Gemini path now prefers a two-pass flow: scene plan first, final scene JSON second
 
 Chosen stack:
 

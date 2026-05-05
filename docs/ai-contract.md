@@ -41,6 +41,13 @@ The first AI flows should be:
 
 These cover the core product thesis without forcing us into complicated model orchestration too early.
 
+In practice, the current `tweaky` Gemini path should prefer a two-pass generation flow:
+
+1. `Prompt -> Scene Plan`
+2. `Scene Plan -> Full Scene Document`
+
+This splits composition thinking from strict schema emission and tends to be more stable than a single giant prompt.
+
 ## Output Modes
 
 The first contract should support two output modes.

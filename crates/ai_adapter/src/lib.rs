@@ -40,6 +40,29 @@ pub struct GeneratedScene {
     pub issues: Vec<ValidationIssue>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScenePlan {
+    pub summary: String,
+    pub canvas: ScenePlanCanvas,
+    pub style_keywords: Vec<String>,
+    pub major_nodes: Vec<ScenePlanNode>,
+    pub composition_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScenePlanCanvas {
+    pub width: f64,
+    pub height: f64,
+    pub background: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScenePlanNode {
+    pub id: String,
+    pub node_type: String,
+    pub purpose: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawAiSceneResponse {
     mode: ResponseMode,
@@ -423,9 +446,35 @@ fn generate_gemini_scene_with_fallback(
     let mut last_error = None;
     for model in gemini_model_attempts(config) {
         let mut repair_feedback = None;
+        let plan = match request_gemini_scene_plan(config, api_key, prompt, &model) {
+            Ok(plan) => Some(plan),
+            Err(error) if is_retryable_gemini_error(&error) => {
+                last_error = Some(error);
+                None
+            }
+            Err(error) => return Err(error),
+        };
 
         for _ in 0..2 {
-            match request_gemini_scene(config, api_key, prompt, &model, repair_feedback.as_deref())
+            let scene_attempt = match &plan {
+                Some(plan) => request_gemini_scene_from_plan(
+                    config,
+                    api_key,
+                    prompt,
+                    plan,
+                    &model,
+                    repair_feedback.as_deref(),
+                ),
+                None => request_gemini_scene(
+                    config,
+                    api_key,
+                    prompt,
+                    &model,
+                    repair_feedback.as_deref(),
+                ),
+            };
+
+            match scene_attempt
             {
                 Ok(response) => match validate_generated_response(response) {
                     Ok(generated) => return Ok(generated),
@@ -457,6 +506,67 @@ fn generate_gemini_scene_with_fallback(
     }))
 }
 
+fn request_gemini_scene_plan(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+    model: &str,
+) -> Result<ScenePlan, AiAdapterError> {
+    let endpoint = gemini_endpoint(config, model);
+    let request = GeminiGenerateContentRequest {
+        system_instruction: GeminiContent {
+            parts: vec![GeminiTextPart {
+                text: gemini_plan_system_instruction(model),
+            }],
+        },
+        contents: vec![GeminiContent {
+            parts: vec![GeminiTextPart {
+                text: gemini_plan_user_prompt(prompt),
+            }],
+        }],
+        generation_config: GeminiGenerationConfig {
+            response_mime_type: "application/json".to_string(),
+            response_json_schema: scene_plan_schema(),
+            temperature: Some(0.5),
+        },
+    };
+
+    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    serde_json::from_str::<ScenePlan>(&json_text)
+        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
+}
+
+fn request_gemini_scene_from_plan(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+    plan: &ScenePlan,
+    model: &str,
+    repair_feedback: Option<&str>,
+) -> Result<AiSceneResponse, AiAdapterError> {
+    let endpoint = gemini_endpoint(config, model);
+    let request = GeminiGenerateContentRequest {
+        system_instruction: GeminiContent {
+            parts: vec![GeminiTextPart {
+                text: gemini_system_instruction(model),
+            }],
+        },
+        contents: vec![GeminiContent {
+            parts: vec![GeminiTextPart {
+                text: gemini_plan_to_scene_prompt(prompt, plan, repair_feedback),
+            }],
+        }],
+        generation_config: GeminiGenerationConfig {
+            response_mime_type: "application/json".to_string(),
+            response_json_schema: response_envelope_schema(),
+            temperature: Some(0.3),
+        },
+    };
+
+    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    parse_ai_scene_response(&json_text)
+}
+
 fn request_gemini_scene(
     config: &ProviderConfig,
     api_key: &str,
@@ -483,6 +593,17 @@ fn request_gemini_scene(
         },
     };
 
+    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    parse_ai_scene_response(&json_text)
+}
+
+fn send_gemini_request(
+    _config: &ProviderConfig,
+    api_key: &str,
+    model: &str,
+    endpoint: String,
+    request: &GeminiGenerateContentRequest,
+) -> Result<String, AiAdapterError> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -541,7 +662,7 @@ fn request_gemini_scene(
             )
         })?;
 
-    parse_ai_scene_response(&json_text)
+    Ok(json_text)
 }
 
 fn parse_ai_scene_response(json_text: &str) -> Result<AiSceneResponse, AiAdapterError> {
@@ -613,6 +734,35 @@ fn gemini_system_instruction(model: &str) -> String {
     )
 }
 
+fn gemini_plan_system_instruction(model: &str) -> String {
+    format!(
+        concat!(
+            "Target model: {}.\n",
+            "You are planning a tweaky scene before emitting final JSON.\n",
+            "Return JSON only.\n",
+            "Produce a compact scene plan with canvas, style keywords, major nodes, and composition notes.\n",
+            "Do not write final tweaky scene JSON in this step.\n",
+            "The plan must be concrete and detailed enough to drive a later structured scene generation pass.\n"
+        ),
+        model
+    )
+}
+
+fn gemini_plan_user_prompt(prompt: &str) -> String {
+    format!(
+        concat!(
+            "Create a scene plan for this request:\n",
+            "{}\n\n",
+            "Requirements:\n",
+            "- choose a concrete canvas size and background color\n",
+            "- list the major editable nodes needed to draw the scene\n",
+            "- make the scene funny and compositionally clear\n",
+            "- prefer native structured nodes over raster fallback when possible\n"
+        ),
+        prompt
+    )
+}
+
 fn gemini_user_prompt(prompt: &str, repair_feedback: Option<&str>) -> String {
     let repair_block = repair_feedback
         .map(|feedback| {
@@ -650,6 +800,43 @@ fn gemini_user_prompt(prompt: &str, repair_feedback: Option<&str>) -> String {
     )
 }
 
+fn gemini_plan_to_scene_prompt(
+    prompt: &str,
+    plan: &ScenePlan,
+    repair_feedback: Option<&str>,
+) -> String {
+    let repair_block = repair_feedback
+        .map(|feedback| {
+            format!(
+                concat!(
+                    "\nRepair feedback from the previous attempt:\n",
+                    "{}\n",
+                    "Fix that issue directly in this attempt.\n"
+                ),
+                feedback
+            )
+        })
+        .unwrap_or_default();
+
+    format!(
+        concat!(
+            "Create a complete tweaky scene document for this request:\n",
+            "{}\n\n",
+            "Use this scene plan as the source of truth:\n",
+            "{}\n\n",
+            "Requirements:\n",
+            "- fully realize the plan into valid tweaky scene JSON\n",
+            "- keep the hierarchy editable and non-empty\n",
+            "- preserve the plan's major nodes and composition\n",
+            "- return the final response envelope only\n",
+            "{}"
+        ),
+        prompt,
+        serde_json::to_string_pretty(plan).unwrap_or_else(|_| "{}".to_string()),
+        repair_block
+    )
+}
+
 fn response_envelope_schema() -> serde_json::Value {
     let document_schema: serde_json::Value = serde_json::from_str(SCENE_DOCUMENT_SCHEMA)
         .unwrap_or_else(|_| serde_json::json!({ "type": "object" }));
@@ -672,6 +859,45 @@ fn response_envelope_schema() -> serde_json::Value {
             }
         },
         "required": ["mode", "summary", "document", "notes"]
+    })
+}
+
+fn scene_plan_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "summary": { "type": "string" },
+            "canvas": {
+                "type": "object",
+                "properties": {
+                    "width": { "type": "number" },
+                    "height": { "type": "number" },
+                    "background": { "type": "string" }
+                },
+                "required": ["width", "height", "background"]
+            },
+            "style_keywords": {
+                "type": "array",
+                "items": { "type": "string" }
+            },
+            "major_nodes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "node_type": { "type": "string" },
+                        "purpose": { "type": "string" }
+                    },
+                    "required": ["id", "node_type", "purpose"]
+                }
+            },
+            "composition_notes": {
+                "type": "array",
+                "items": { "type": "string" }
+            }
+        },
+        "required": ["summary", "canvas", "style_keywords", "major_nodes", "composition_notes"]
     })
 }
 
@@ -819,8 +1045,9 @@ struct GeminiErrorPayload {
 mod tests {
     use super::{
         AiAdapterError, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL, GeneratedScene,
-        ProviderConfig, ProviderKind, ResponseMode, gemini_endpoint, gemini_model_attempts,
-        gemini_user_prompt, generate_scene_from_prompt_with_config, parse_ai_scene_response,
+        ProviderConfig, ProviderKind, ResponseMode, ScenePlan, ScenePlanCanvas, ScenePlanNode,
+        gemini_endpoint, gemini_model_attempts, gemini_plan_to_scene_prompt, gemini_user_prompt,
+        generate_scene_from_prompt_with_config, parse_ai_scene_response, scene_plan_schema,
     };
     use std::env;
 
@@ -969,5 +1196,44 @@ mod tests {
         assert!(prompt.contains("Example 1: playful structured poster"));
         assert!(prompt.contains("Example 2: hybrid structured plus raster scene"));
         assert!(prompt.contains("missing document"));
+    }
+
+    #[test]
+    fn scene_plan_prompt_embeds_plan_json() {
+        let plan = ScenePlan {
+            summary: "Pelican on bike".to_string(),
+            canvas: ScenePlanCanvas {
+                width: 1200.0,
+                height: 900.0,
+                background: "#f7f1df".to_string(),
+            },
+            style_keywords: vec!["playful".to_string(), "poster".to_string()],
+            major_nodes: vec![ScenePlanNode {
+                id: "pelican_body".to_string(),
+                node_type: "Ellipse".to_string(),
+                purpose: "Main pelican body mass".to_string(),
+            }],
+            composition_notes: vec!["Center the bicycle".to_string()],
+        };
+
+        let prompt = gemini_plan_to_scene_prompt(
+            "a drawing of a pelican riding a bicycle",
+            &plan,
+            Some("root was empty"),
+        );
+
+        assert!(prompt.contains("\"summary\": \"Pelican on bike\""));
+        assert!(prompt.contains("root was empty"));
+        assert!(prompt.contains("pelican_body"));
+    }
+
+    #[test]
+    fn scene_plan_schema_requires_major_sections() {
+        let schema = scene_plan_schema();
+        let required = schema["required"]
+            .as_array()
+            .expect("required should be an array");
+        assert!(required.iter().any(|value| value == "summary"));
+        assert!(required.iter().any(|value| value == "major_nodes"));
     }
 }
