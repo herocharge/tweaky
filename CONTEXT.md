@@ -119,6 +119,7 @@ Currently implemented:
 - the Gemini path now also includes repo-native few-shot examples and one retry-with-feedback pass for malformed scene output
 - the Gemini path now uses a two-pass plan-then-scene flow before falling back to simpler generation behavior
 - the Gemini path can now render a generated scene to PNG and send that image back for one critique/revision round
+- the Gemini path now chooses a repo-native template family (`poster`, `shapes`, or `hybrid`) based on the prompt and conditions planning/generation on that scaffold
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`

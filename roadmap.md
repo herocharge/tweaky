@@ -439,6 +439,7 @@ Current status:
 - the live Gemini path now includes few-shot prompting from repo examples plus a retry-with-feedback repair pass
 - the live Gemini path now uses a two-pass scene planner before final JSON generation
 - the live Gemini path now supports one rendered-image critique/revision round
+- the live Gemini path now starts from a selected repo-native scaffold family instead of generating from a blank structural prior
 - `editor` CLI can generate from a prompt while selecting provider/model/key-env overrides
 
 Risks:

@@ -56,6 +56,15 @@ After initial generation, the next refinement layer should be:
 
 This gives the model a chance to see visual failures instead of only reasoning over JSON.
 
+For practical generation quality, `tweaky` should also prefer template-conditioned generation:
+
+1. Choose a scaffold family from known-good repo scenes
+2. Plan against that scaffold
+3. Expand into a full scene
+4. Critique and revise
+
+This is more reliable than asking the model to invent both composition and structure from an empty prior every time.
+
 ## Output Modes
 
 The first contract should support two output modes.

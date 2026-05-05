@@ -74,6 +74,13 @@ pub struct SceneCritique {
     pub revision_goals: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SceneTemplateKind {
+    Poster,
+    Shapes,
+    Hybrid,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawAiSceneResponse {
     mode: ResponseMode,
@@ -434,6 +441,39 @@ fn response_from_scene_json(
     })
 }
 
+fn template_for_prompt(prompt: &str) -> SceneTemplateKind {
+    let normalized = normalize_prompt(prompt);
+    if normalized.contains("paint") || normalized.contains("brush") || normalized.contains("hybrid")
+    {
+        return SceneTemplateKind::Hybrid;
+    }
+
+    if normalized.contains("study")
+        || normalized.contains("geometric")
+        || normalized.contains("shape")
+    {
+        return SceneTemplateKind::Shapes;
+    }
+
+    SceneTemplateKind::Poster
+}
+
+fn template_scene_json(kind: SceneTemplateKind) -> &'static str {
+    match kind {
+        SceneTemplateKind::Poster => BASIC_POSTER,
+        SceneTemplateKind::Shapes => include_str!("../../../examples/shapes_study.vsd.json"),
+        SceneTemplateKind::Hybrid => HYBRID_SCENE,
+    }
+}
+
+fn template_name(kind: SceneTemplateKind) -> &'static str {
+    match kind {
+        SceneTemplateKind::Poster => "poster",
+        SceneTemplateKind::Shapes => "shapes",
+        SceneTemplateKind::Hybrid => "hybrid",
+    }
+}
+
 fn normalize_prompt(prompt: &str) -> String {
     prompt
         .trim()
@@ -455,9 +495,18 @@ fn generate_gemini_scene_with_fallback(
     prompt: &str,
 ) -> Result<GeneratedScene, AiAdapterError> {
     let mut last_error = None;
+    let template_kind = template_for_prompt(prompt);
+    let template_scene = template_scene_json(template_kind);
     for model in gemini_model_attempts(config) {
         let mut repair_feedback = None;
-        let plan = match request_gemini_scene_plan(config, api_key, prompt, &model) {
+        let plan = match request_gemini_scene_plan(
+            config,
+            api_key,
+            prompt,
+            template_kind,
+            template_scene,
+            &model,
+        ) {
             Ok(plan) => Some(plan),
             Err(error) if is_retryable_gemini_error(&error) => {
                 last_error = Some(error);
@@ -472,6 +521,8 @@ fn generate_gemini_scene_with_fallback(
                     config,
                     api_key,
                     prompt,
+                    template_kind,
+                    template_scene,
                     plan,
                     &model,
                     repair_feedback.as_deref(),
@@ -480,6 +531,8 @@ fn generate_gemini_scene_with_fallback(
                     config,
                     api_key,
                     prompt,
+                    template_kind,
+                    template_scene,
                     &model,
                     repair_feedback.as_deref(),
                 ),
@@ -595,6 +648,8 @@ fn request_gemini_scene_plan(
     config: &ProviderConfig,
     api_key: &str,
     prompt: &str,
+    template_kind: SceneTemplateKind,
+    template_scene: &str,
     model: &str,
 ) -> Result<ScenePlan, AiAdapterError> {
     let endpoint = gemini_endpoint(config, model);
@@ -603,7 +658,11 @@ fn request_gemini_scene_plan(
             parts: vec![GeminiPart::text(gemini_plan_system_instruction(model))],
         },
         contents: vec![GeminiContent {
-            parts: vec![GeminiPart::text(gemini_plan_user_prompt(prompt))],
+            parts: vec![GeminiPart::text(gemini_plan_user_prompt(
+                prompt,
+                template_kind,
+                template_scene,
+            ))],
         }],
         generation_config: GeminiGenerationConfig {
             response_mime_type: "application/json".to_string(),
@@ -621,6 +680,8 @@ fn request_gemini_scene_from_plan(
     config: &ProviderConfig,
     api_key: &str,
     prompt: &str,
+    template_kind: SceneTemplateKind,
+    template_scene: &str,
     plan: &ScenePlan,
     model: &str,
     repair_feedback: Option<&str>,
@@ -633,6 +694,8 @@ fn request_gemini_scene_from_plan(
         contents: vec![GeminiContent {
             parts: vec![GeminiPart::text(gemini_plan_to_scene_prompt(
                 prompt,
+                template_kind,
+                template_scene,
                 plan,
                 repair_feedback,
             ))],
@@ -714,6 +777,8 @@ fn request_gemini_scene(
     config: &ProviderConfig,
     api_key: &str,
     prompt: &str,
+    template_kind: SceneTemplateKind,
+    template_scene: &str,
     model: &str,
     repair_feedback: Option<&str>,
 ) -> Result<AiSceneResponse, AiAdapterError> {
@@ -723,7 +788,12 @@ fn request_gemini_scene(
             parts: vec![GeminiPart::text(gemini_system_instruction(model))],
         },
         contents: vec![GeminiContent {
-            parts: vec![GeminiPart::text(gemini_user_prompt(prompt, repair_feedback))],
+            parts: vec![GeminiPart::text(gemini_user_prompt(
+                prompt,
+                template_kind,
+                template_scene,
+                repair_feedback,
+            ))],
         }],
         generation_config: GeminiGenerationConfig {
             response_mime_type: "application/json".to_string(),
@@ -887,18 +957,26 @@ fn gemini_plan_system_instruction(model: &str) -> String {
     )
 }
 
-fn gemini_plan_user_prompt(prompt: &str) -> String {
+fn gemini_plan_user_prompt(
+    prompt: &str,
+    template_kind: SceneTemplateKind,
+    template_scene: &str,
+) -> String {
     format!(
         concat!(
             "Create a scene plan for this request:\n",
             "{}\n\n",
+            "Use this scaffold family as a structural prior: {}.\n",
+            "Template scene:\n{}\n\n",
             "Requirements:\n",
             "- choose a concrete canvas size and background color\n",
             "- list the major editable nodes needed to draw the scene\n",
             "- make the scene funny and compositionally clear\n",
             "- prefer native structured nodes over raster fallback when possible\n"
         ),
-        prompt
+        prompt,
+        template_name(template_kind),
+        template_scene
     )
 }
 
@@ -914,7 +992,12 @@ fn gemini_critique_system_instruction(model: &str) -> String {
     )
 }
 
-fn gemini_user_prompt(prompt: &str, repair_feedback: Option<&str>) -> String {
+fn gemini_user_prompt(
+    prompt: &str,
+    template_kind: SceneTemplateKind,
+    template_scene: &str,
+    repair_feedback: Option<&str>,
+) -> String {
     let repair_block = repair_feedback
         .map(|feedback| {
             format!(
@@ -932,6 +1015,8 @@ fn gemini_user_prompt(prompt: &str, repair_feedback: Option<&str>) -> String {
         concat!(
             "Create a new tweaky scene document for this request:\n",
             "{}\n\n",
+            "Use this scaffold family as a starting point: {}.\n",
+            "Template scene:\n{}\n\n",
             "Canvas guidance:\n",
             "- use a reasonable poster-like canvas size\n",
             "- include a complete root hierarchy\n",
@@ -944,15 +1029,19 @@ fn gemini_user_prompt(prompt: &str, repair_feedback: Option<&str>) -> String {
             "Example 2: hybrid structured plus raster scene\n{}\n",
             "{}"
         ),
-        prompt
-        , PELICAN_BICYCLE
-        , HYBRID_SCENE
-        , repair_block
+        prompt,
+        template_name(template_kind),
+        template_scene,
+        PELICAN_BICYCLE,
+        HYBRID_SCENE,
+        repair_block
     )
 }
 
 fn gemini_plan_to_scene_prompt(
     prompt: &str,
+    template_kind: SceneTemplateKind,
+    template_scene: &str,
     plan: &ScenePlan,
     repair_feedback: Option<&str>,
 ) -> String {
@@ -973,6 +1062,8 @@ fn gemini_plan_to_scene_prompt(
         concat!(
             "Create a complete tweaky scene document for this request:\n",
             "{}\n\n",
+            "Use this scaffold family as the structural base: {}.\n",
+            "Template scene:\n{}\n\n",
             "Use this scene plan as the source of truth:\n",
             "{}\n\n",
             "Requirements:\n",
@@ -983,6 +1074,8 @@ fn gemini_plan_to_scene_prompt(
             "{}"
         ),
         prompt,
+        template_name(template_kind),
+        template_scene,
         serde_json::to_string_pretty(plan).unwrap_or_else(|_| "{}".to_string()),
         repair_block
     )
@@ -1283,10 +1376,11 @@ struct GeminiErrorPayload {
 #[cfg(test)]
 mod tests {
     use super::{
-        AiAdapterError, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL, GeneratedScene,
-        ProviderConfig, ProviderKind, ResponseMode, ScenePlan, ScenePlanCanvas, ScenePlanNode,
-        gemini_endpoint, gemini_model_attempts, gemini_plan_to_scene_prompt, gemini_user_prompt,
-        generate_scene_from_prompt_with_config, parse_ai_scene_response, scene_plan_schema,
+        AiAdapterError, BASIC_POSTER, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL,
+        GeneratedScene, ProviderConfig, ProviderKind, ResponseMode, ScenePlan, ScenePlanCanvas,
+        ScenePlanNode, SceneTemplateKind, gemini_endpoint, gemini_model_attempts,
+        gemini_plan_to_scene_prompt, gemini_user_prompt, generate_scene_from_prompt_with_config,
+        parse_ai_scene_response, scene_plan_schema,
     };
     use std::env;
 
@@ -1429,6 +1523,8 @@ mod tests {
     fn gemini_prompt_includes_examples_and_feedback() {
         let prompt = gemini_user_prompt(
             "a drawing of a pelican riding a bicycle",
+            SceneTemplateKind::Poster,
+            BASIC_POSTER,
             Some("missing document"),
         );
 
@@ -1457,6 +1553,8 @@ mod tests {
 
         let prompt = gemini_plan_to_scene_prompt(
             "a drawing of a pelican riding a bicycle",
+            SceneTemplateKind::Poster,
+            BASIC_POSTER,
             &plan,
             Some("root was empty"),
         );

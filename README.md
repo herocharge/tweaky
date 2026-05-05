@@ -72,6 +72,7 @@ AI provider notes:
 - the Gemini path now renders the generated scene and can run one image-based critique/revision pass
 - the Gemini path now also uses repo-native few-shot examples and one retry-with-feedback pass when the model returns malformed scene output
 - the Gemini path now prefers a two-pass flow: scene plan first, final scene JSON second
+- the Gemini path now chooses a repo-native scaffold family before planning, so generation starts from a structural template instead of from zero
 
 Chosen stack:
 
