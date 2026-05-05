@@ -24,6 +24,7 @@
 #include <QTreeWidgetItemIterator>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
+#include <QMouseEvent>
 
 CanvasWidget::CanvasWidget(QWidget* parent) : QWidget(parent) {
   setMinimumSize(720, 520);
@@ -231,6 +232,32 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     }
   }
 
+  if (selectedNode_.hasBounds) {
+    const QRectF selectedRect = mapSceneRect(selectedNode_.bounds, canvasRect);
+    const QRectF outlineRect = selectedRect.adjusted(-6.0, -6.0, 6.0, 6.0);
+    painter.setOpacity(1.0);
+    painter.setPen(QPen(QColor("#d55a2a"), 1.75));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(outlineRect);
+
+    const qreal handleSize = 8.0;
+    const QColor handleColor("#fff8ee");
+    const QColor handleStroke("#d55a2a");
+    const QList<QPointF> handles = {
+        outlineRect.topLeft(),
+        outlineRect.topRight(),
+        outlineRect.bottomLeft(),
+        outlineRect.bottomRight(),
+    };
+
+    painter.setPen(QPen(handleStroke, 1.5));
+    painter.setBrush(handleColor);
+    for (const auto& handleCenter : handles) {
+      painter.drawRect(QRectF(handleCenter.x() - handleSize * 0.5,
+                              handleCenter.y() - handleSize * 0.5, handleSize, handleSize));
+    }
+  }
+
   painter.setOpacity(1.0);
 }
 
@@ -270,6 +297,34 @@ QRectF CanvasWidget::mapSceneRect(const SceneRectData& rect, const QRectF& canva
                 rect.width * scaleX, rect.height * scaleY);
 }
 
+void CanvasWidget::mousePressEvent(QMouseEvent* event) {
+  if (event->button() == Qt::LeftButton) {
+    const auto nodeId = pickNodeAt(event->position());
+    if (!nodeId.isEmpty()) {
+      emit nodePicked(nodeId);
+      event->accept();
+      return;
+    }
+  }
+
+  QWidget::mousePressEvent(event);
+}
+
+QString CanvasWidget::pickNodeAt(const QPointF& widgetPoint) const {
+  const QRectF canvasRect = canvasRectForWidget();
+  for (auto it = scene_.renderItems.crbegin(); it != scene_.renderItems.crend(); ++it) {
+    if (!it->hasBounds) {
+      continue;
+    }
+
+    if (mapSceneRect(it->bounds, canvasRect).contains(widgetPoint)) {
+      return it->nodeId;
+    }
+  }
+
+  return QString();
+}
+
 MainWindow::MainWindow(const QString& scenePath, QWidget* parent) : QMainWindow(parent) {
   buildUi();
   loadScene(scenePath);
@@ -282,6 +337,7 @@ void MainWindow::buildUi() {
 
   canvas_ = new CanvasWidget(this);
   setCentralWidget(canvas_);
+  connect(canvas_, &CanvasWidget::nodePicked, this, &MainWindow::handleCanvasNodePicked);
 
   hierarchyTree_ = new QTreeWidget(this);
   hierarchyTree_->setHeaderLabels({"Node", "Type"});
@@ -732,6 +788,12 @@ void MainWindow::handleTreeSelectionChanged() {
   updateInspector(node);
   canvas_->setSelectedNode(node);
   statusBar()->showMessage(QString("Selected %1 [%2]").arg(node.name, node.type));
+}
+
+void MainWindow::handleCanvasNodePicked(const QString& nodeId) {
+  if (auto* selectedItem = findTreeItemByNodeId(nodeId)) {
+    hierarchyTree_->setCurrentItem(selectedItem);
+  }
 }
 
 void MainWindow::updateInspector(const SceneNodeData& node) {

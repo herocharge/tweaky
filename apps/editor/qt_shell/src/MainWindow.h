@@ -89,13 +89,18 @@ public:
   void setScene(const SceneDocumentData& scene);
   void setSelectedNode(const SceneNodeData& node);
 
+signals:
+  void nodePicked(const QString& nodeId);
+
 protected:
   void paintEvent(QPaintEvent* event) override;
+  void mousePressEvent(QMouseEvent* event) override;
 
 private:
   QRectF canvasRectForWidget() const;
   QPointF mapScenePoint(const ScenePointData& point, const QRectF& canvasRect) const;
   QRectF mapSceneRect(const SceneRectData& rect, const QRectF& canvasRect) const;
+  QString pickNodeAt(const QPointF& widgetPoint) const;
   SceneDocumentData scene_;
   SceneNodeData selectedNode_;
 };
@@ -112,6 +117,7 @@ private slots:
   void exportPngDialog();
   void applyNodeEdits();
   void scheduleAutoApply();
+  void handleCanvasNodePicked(const QString& nodeId);
   void handleTreeSelectionChanged();
 
 private:
