@@ -115,9 +115,10 @@ Currently implemented:
 - `docs/ai-contract.md` now defines the first AI prompt/document/patch contract
 - `examples/pelican_bicycle.vsd.json` now serves as the first funny benchmark scene for "a drawing of a pelican riding a bicycle"
 - `ai_adapter` now has a provider abstraction with a real Gemini prompt-to-scene HTTP path, a mock fallback, typed response envelopes, and extension seams for openai-compatible backends
-- the Gemini path now includes a fallback model chain for transient provider overloads, currently defaulting to `gemini-3.1-flash-lite-preview`
+- the Gemini path now includes a fallback model chain for transient provider overloads, currently defaulting to `gemini-2.5-flash-lite`
 - the Gemini path now also includes repo-native few-shot examples and one retry-with-feedback pass for malformed scene output
 - the Gemini path now uses a two-pass plan-then-scene flow before falling back to simpler generation behavior
+- the Gemini path can now render a generated scene to PNG and send that image back for one critique/revision round
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`

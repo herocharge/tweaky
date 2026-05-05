@@ -1,3 +1,5 @@
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use scene_schema::{SceneFile, ValidationIssue, parse_scene_str, validate_scene};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -9,7 +11,7 @@ const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json
 const HYBRID_SCENE: &str = include_str!("../../../examples/hybrid_scene.vsd.json");
 const SCENE_DOCUMENT_SCHEMA: &str = include_str!("../../../schemas/scene-document.schema.json");
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_GEMINI_FALLBACK_MODEL: &str = "gemini-3.1-flash-lite-preview";
+const DEFAULT_GEMINI_FALLBACK_MODEL: &str = "gemini-2.5-flash-lite";
 
 pub const DEFAULT_PROVIDER_ENV_VAR: &str = "TWEAKY_AI_PROVIDER";
 pub const DEFAULT_MODEL_ENV_VAR: &str = "TWEAKY_AI_MODEL";
@@ -61,6 +63,15 @@ pub struct ScenePlanNode {
     pub id: String,
     pub node_type: String,
     pub purpose: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SceneCritique {
+    pub satisfactory: bool,
+    pub summary: String,
+    pub strengths: Vec<String>,
+    pub issues: Vec<String>,
+    pub revision_goals: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -476,18 +487,59 @@ fn generate_gemini_scene_with_fallback(
 
             match scene_attempt
             {
-                Ok(response) => match validate_generated_response(response) {
-                    Ok(generated) => return Ok(generated),
-                    Err(error) if should_retry_same_model_with_feedback(&error, &repair_feedback) => {
-                        repair_feedback = Some(build_repair_feedback(&error));
-                        last_error = Some(error);
+                Ok(response) => {
+                    let scene = response.document.clone();
+                    match validate_generated_response(response) {
+                        Ok(generated) => {
+                            let scene = generated.response.document.clone().expect("document");
+                            match critique_and_maybe_revise_scene(
+                                config,
+                                api_key,
+                                prompt,
+                                &scene,
+                                &model,
+                            ) {
+                                Ok(Some(revised_generated)) => return Ok(revised_generated),
+                                Ok(None) => return Ok(generated),
+                                Err(error) if is_retryable_gemini_error(&error) => {
+                                    last_error = Some(error);
+                                    break;
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
+                        Err(error @ AiAdapterError::InvalidDocument(_)) if scene.is_some() => {
+                            let scene = scene.expect("scene should exist");
+                            match critique_and_maybe_revise_scene(
+                                config,
+                                api_key,
+                                prompt,
+                                &scene,
+                                &model,
+                            ) {
+                                Ok(Some(revised_generated)) => return Ok(revised_generated),
+                                Ok(None) => {
+                                    last_error = Some(error);
+                                    break;
+                                }
+                                Err(revision_error) if is_retryable_gemini_error(&revision_error) => {
+                                    last_error = Some(revision_error);
+                                    break;
+                                }
+                                Err(revision_error) => return Err(revision_error),
+                            }
+                        }
+                        Err(error) if should_retry_same_model_with_feedback(&error, &repair_feedback) => {
+                            repair_feedback = Some(build_repair_feedback(&error));
+                            last_error = Some(error);
+                        }
+                        Err(error) if is_retryable_gemini_error(&error) => {
+                            last_error = Some(error);
+                            break;
+                        }
+                        Err(error) => return Err(error),
                     }
-                    Err(error) if is_retryable_gemini_error(&error) => {
-                        last_error = Some(error);
-                        break;
-                    }
-                    Err(error) => return Err(error),
-                },
+                }
                 Err(error) if should_retry_same_model_with_feedback(&error, &repair_feedback) => {
                     repair_feedback = Some(build_repair_feedback(&error));
                     last_error = Some(error);
@@ -506,6 +558,39 @@ fn generate_gemini_scene_with_fallback(
     }))
 }
 
+fn critique_and_maybe_revise_scene(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+    scene: &SceneFile,
+    model: &str,
+) -> Result<Option<GeneratedScene>, AiAdapterError> {
+    let rendered_png = render_scene_png(scene)?;
+    let critique =
+        request_gemini_scene_critique(config, api_key, prompt, scene, &rendered_png, model)?;
+
+    if critique.satisfactory || critique.revision_goals.is_empty() {
+        return Ok(None);
+    }
+
+    let revised_response =
+        request_gemini_scene_revision(config, api_key, prompt, scene, &rendered_png, &critique, model)?;
+    let revised_generated = validate_generated_response(revised_response)?;
+    Ok(Some(revised_generated))
+}
+
+fn render_scene_png(scene: &SceneFile) -> Result<Vec<u8>, AiAdapterError> {
+    let plan = renderer::build_render_plan(scene);
+    renderer::skia_backend::render_plan_to_png(
+        &plan,
+        scene.document.width.round() as u32,
+        scene.document.height.round() as u32,
+    )
+    .map_err(|error| {
+        AiAdapterError::InvalidProviderConfig(format!("failed to render critique PNG: {error}"))
+    })
+}
+
 fn request_gemini_scene_plan(
     config: &ProviderConfig,
     api_key: &str,
@@ -515,14 +600,10 @@ fn request_gemini_scene_plan(
     let endpoint = gemini_endpoint(config, model);
     let request = GeminiGenerateContentRequest {
         system_instruction: GeminiContent {
-            parts: vec![GeminiTextPart {
-                text: gemini_plan_system_instruction(model),
-            }],
+            parts: vec![GeminiPart::text(gemini_plan_system_instruction(model))],
         },
         contents: vec![GeminiContent {
-            parts: vec![GeminiTextPart {
-                text: gemini_plan_user_prompt(prompt),
-            }],
+            parts: vec![GeminiPart::text(gemini_plan_user_prompt(prompt))],
         }],
         generation_config: GeminiGenerationConfig {
             response_mime_type: "application/json".to_string(),
@@ -547,19 +628,81 @@ fn request_gemini_scene_from_plan(
     let endpoint = gemini_endpoint(config, model);
     let request = GeminiGenerateContentRequest {
         system_instruction: GeminiContent {
-            parts: vec![GeminiTextPart {
-                text: gemini_system_instruction(model),
-            }],
+            parts: vec![GeminiPart::text(gemini_system_instruction(model))],
         },
         contents: vec![GeminiContent {
-            parts: vec![GeminiTextPart {
-                text: gemini_plan_to_scene_prompt(prompt, plan, repair_feedback),
-            }],
+            parts: vec![GeminiPart::text(gemini_plan_to_scene_prompt(
+                prompt,
+                plan,
+                repair_feedback,
+            ))],
         }],
         generation_config: GeminiGenerationConfig {
             response_mime_type: "application/json".to_string(),
             response_json_schema: response_envelope_schema(),
             temperature: Some(0.3),
+        },
+    };
+
+    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    parse_ai_scene_response(&json_text)
+}
+
+fn request_gemini_scene_critique(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+    scene: &SceneFile,
+    rendered_png: &[u8],
+    model: &str,
+) -> Result<SceneCritique, AiAdapterError> {
+    let endpoint = gemini_endpoint(config, model);
+    let request = GeminiGenerateContentRequest {
+        system_instruction: GeminiContent {
+            parts: vec![GeminiPart::text(gemini_critique_system_instruction(model))],
+        },
+        contents: vec![GeminiContent {
+            parts: vec![
+                GeminiPart::text(gemini_critique_user_prompt(prompt, scene)),
+                GeminiPart::inline_png(rendered_png),
+            ],
+        }],
+        generation_config: GeminiGenerationConfig {
+            response_mime_type: "application/json".to_string(),
+            response_json_schema: scene_critique_schema(),
+            temperature: Some(0.2),
+        },
+    };
+
+    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    serde_json::from_str::<SceneCritique>(&json_text)
+        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
+}
+
+fn request_gemini_scene_revision(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+    scene: &SceneFile,
+    rendered_png: &[u8],
+    critique: &SceneCritique,
+    model: &str,
+) -> Result<AiSceneResponse, AiAdapterError> {
+    let endpoint = gemini_endpoint(config, model);
+    let request = GeminiGenerateContentRequest {
+        system_instruction: GeminiContent {
+            parts: vec![GeminiPart::text(gemini_system_instruction(model))],
+        },
+        contents: vec![GeminiContent {
+            parts: vec![
+                GeminiPart::text(gemini_revision_user_prompt(prompt, scene, critique)),
+                GeminiPart::inline_png(rendered_png),
+            ],
+        }],
+        generation_config: GeminiGenerationConfig {
+            response_mime_type: "application/json".to_string(),
+            response_json_schema: response_envelope_schema(),
+            temperature: Some(0.25),
         },
     };
 
@@ -577,14 +720,10 @@ fn request_gemini_scene(
     let endpoint = gemini_endpoint(config, model);
     let request = GeminiGenerateContentRequest {
         system_instruction: GeminiContent {
-            parts: vec![GeminiTextPart {
-                text: gemini_system_instruction(model),
-            }],
+            parts: vec![GeminiPart::text(gemini_system_instruction(model))],
         },
         contents: vec![GeminiContent {
-            parts: vec![GeminiTextPart {
-                text: gemini_user_prompt(prompt, repair_feedback),
-            }],
+            parts: vec![GeminiPart::text(gemini_user_prompt(prompt, repair_feedback))],
         }],
         generation_config: GeminiGenerationConfig {
             response_mime_type: "application/json".to_string(),
@@ -763,6 +902,18 @@ fn gemini_plan_user_prompt(prompt: &str) -> String {
     )
 }
 
+fn gemini_critique_system_instruction(model: &str) -> String {
+    format!(
+        concat!(
+            "Target model: {}.\n",
+            "You are critiquing a rendered tweaky scene against the user's prompt.\n",
+            "Look at the image, compare it to the prompt and scene JSON, and return JSON only.\n",
+            "Be specific about visual problems and concrete revision goals.\n"
+        ),
+        model
+    )
+}
+
 fn gemini_user_prompt(prompt: &str, repair_feedback: Option<&str>) -> String {
     let repair_block = repair_feedback
         .map(|feedback| {
@@ -837,6 +988,42 @@ fn gemini_plan_to_scene_prompt(
     )
 }
 
+fn gemini_critique_user_prompt(prompt: &str, scene: &SceneFile) -> String {
+    format!(
+        concat!(
+            "User prompt:\n{}\n\n",
+            "Current scene JSON:\n{}\n\n",
+            "Critique whether the rendered image matches the user's intent.\n",
+            "If it is good enough, mark satisfactory true.\n",
+            "If not, identify the key visual failures and concrete revision goals.\n"
+        ),
+        prompt,
+        serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string())
+    )
+}
+
+fn gemini_revision_user_prompt(
+    prompt: &str,
+    scene: &SceneFile,
+    critique: &SceneCritique,
+) -> String {
+    format!(
+        concat!(
+            "Revise this tweaky scene.\n\n",
+            "User prompt:\n{}\n\n",
+            "Current scene JSON:\n{}\n\n",
+            "Critique summary:\n{}\n\n",
+            "Revision goals:\n{}\n\n",
+            "Return a full revised tweaky scene response envelope.\n",
+            "Preserve any good structure that already works.\n"
+        ),
+        prompt,
+        serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string()),
+        critique.summary,
+        critique.revision_goals.join("\n")
+    )
+}
+
 fn response_envelope_schema() -> serde_json::Value {
     let document_schema: serde_json::Value = serde_json::from_str(SCENE_DOCUMENT_SCHEMA)
         .unwrap_or_else(|_| serde_json::json!({ "type": "object" }));
@@ -898,6 +1085,29 @@ fn scene_plan_schema() -> serde_json::Value {
             }
         },
         "required": ["summary", "canvas", "style_keywords", "major_nodes", "composition_notes"]
+    })
+}
+
+fn scene_critique_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "satisfactory": { "type": "boolean" },
+            "summary": { "type": "string" },
+            "strengths": {
+                "type": "array",
+                "items": { "type": "string" }
+            },
+            "issues": {
+                "type": "array",
+                "items": { "type": "string" }
+            },
+            "revision_goals": {
+                "type": "array",
+                "items": { "type": "string" }
+            }
+        },
+        "required": ["satisfactory", "summary", "strengths", "issues", "revision_goals"]
     })
 }
 
@@ -991,12 +1201,41 @@ struct GeminiGenerateContentRequest {
 
 #[derive(Debug, Serialize)]
 struct GeminiContent {
-    parts: Vec<GeminiTextPart>,
+    parts: Vec<GeminiPart>,
 }
 
 #[derive(Debug, Serialize)]
-struct GeminiTextPart {
-    text: String,
+struct GeminiPart {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(rename = "inlineData", skip_serializing_if = "Option::is_none")]
+    inline_data: Option<GeminiInlineData>,
+}
+
+impl GeminiPart {
+    fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: Some(text.into()),
+            inline_data: None,
+        }
+    }
+
+    fn inline_png(bytes: &[u8]) -> Self {
+        Self {
+            text: None,
+            inline_data: Some(GeminiInlineData {
+                mime_type: "image/png".to_string(),
+                data: BASE64_STANDARD.encode(bytes),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiInlineData {
+    #[serde(rename = "mimeType")]
+    mime_type: String,
+    data: String,
 }
 
 #[derive(Debug, Serialize)]

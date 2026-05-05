@@ -435,9 +435,10 @@ Current status:
 - `docs/ai-contract.md` exists and defines the first prompt/document/patch contract
 - `examples/pelican_bicycle.vsd.json` exists as the first benchmark scene
 - `crates/ai_adapter` now supports live Gemini prompt-to-scene generation, canned prompt routing, schema validation, and provider configuration seams
-- the live Gemini path now supports a fallback model chain for transient provider capacity failures
+- the live Gemini path now supports a fallback model chain for transient provider capacity failures, using `gemini-2.5-flash-lite`
 - the live Gemini path now includes few-shot prompting from repo examples plus a retry-with-feedback repair pass
 - the live Gemini path now uses a two-pass scene planner before final JSON generation
+- the live Gemini path now supports one rendered-image critique/revision round
 - `editor` CLI can generate from a prompt while selecting provider/model/key-env overrides
 
 Risks:

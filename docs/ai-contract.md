@@ -48,6 +48,14 @@ In practice, the current `tweaky` Gemini path should prefer a two-pass generatio
 
 This splits composition thinking from strict schema emission and tends to be more stable than a single giant prompt.
 
+After initial generation, the next refinement layer should be:
+
+1. Render the generated scene
+2. Send the rendered image, prompt, and scene JSON back to the model
+3. Ask for targeted critique and a revised full scene
+
+This gives the model a chance to see visual failures instead of only reasoning over JSON.
+
 ## Output Modes
 
 The first contract should support two output modes.
