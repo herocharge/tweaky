@@ -183,6 +183,7 @@ private:
   void keyPressEvent(QKeyEvent* event) override;
   void buildUi();
   void buildMenus();
+  void buildShortcuts();
   bool loadScene(const QString& scenePath);
   void refreshUiAfterSceneLoad(const QString& statusMessage);
   void populateTree();
@@ -195,6 +196,7 @@ private:
   bool ensureWorkingCopyFromSource(const QString& sourcePath);
   bool saveWorkingCopyToPath(const QString& outputPath);
   bool maybeResolveUnsavedChanges(const QString& actionLabel);
+  bool shouldIgnoreEditingShortcut() const;
   void resetHistory();
   QString readWorkingCopyText() const;
   bool writeWorkingCopyText(const QString& contents);

@@ -23,6 +23,7 @@
 #include <QPainterPath>
 #include <QProcess>
 #include <QSaveFile>
+#include <QShortcut>
 #include <QStatusBar>
 #include <QTreeWidgetItemIterator>
 #include <QTreeWidgetItem>
@@ -716,7 +717,6 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
   }
 
   const double step = event->modifiers().testFlag(Qt::ShiftModifier) ? 10.0 : 1.0;
-  const bool lineHeightMode = event->modifiers().testFlag(Qt::AltModifier);
   bool handled = false;
 
   switch (event->key()) {
@@ -727,31 +727,10 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
       handled = nudgeSelectedNode(step, 0.0);
       break;
     case Qt::Key_Up:
-      handled = lineHeightMode ? adjustSelectedTextLineHeight(-0.1)
-                               : nudgeSelectedNode(0.0, -step);
+      handled = nudgeSelectedNode(0.0, -step);
       break;
     case Qt::Key_Down:
-      handled = lineHeightMode ? adjustSelectedTextLineHeight(0.1)
-                               : nudgeSelectedNode(0.0, step);
-      break;
-    case Qt::Key_BracketLeft:
-    case Qt::Key_Minus:
-      handled = adjustSelectedTextFontSize(-2.0);
-      break;
-    case Qt::Key_BracketRight:
-    case Qt::Key_Equal:
-    case Qt::Key_Plus:
-      handled = adjustSelectedTextFontSize(2.0);
-      break;
-    case Qt::Key_Return:
-    case Qt::Key_Enter:
-      if (scene_.selectedNodeId.isEmpty() || !nodeIndex_.contains(scene_.selectedNodeId) ||
-          nodeIndex_.value(scene_.selectedNodeId).type != "Text") {
-        handled = false;
-      } else {
-        editSelectedTextNode();
-        handled = true;
-      }
+      handled = nudgeSelectedNode(0.0, step);
       break;
     default:
       break;
@@ -769,6 +748,7 @@ void MainWindow::buildUi() {
   setWindowTitle("tweaky");
   resize(1380, 900);
   buildMenus();
+  buildShortcuts();
 
   canvas_ = new CanvasWidget(this);
   setCentralWidget(canvas_);
@@ -899,6 +879,65 @@ void MainWindow::buildMenus() {
   auto* quitAction = fileMenu->addAction("&Quit");
   quitAction->setShortcut(QKeySequence::Quit);
   connect(quitAction, &QAction::triggered, this, &QWidget::close);
+}
+
+void MainWindow::buildShortcuts() {
+  auto addShortcut = [this](const QKeySequence& sequence, auto handler) {
+    auto* shortcut = new QShortcut(sequence, this);
+    shortcut->setContext(Qt::WindowShortcut);
+    connect(shortcut, &QShortcut::activated, this, handler);
+  };
+
+  addShortcut(QKeySequence(Qt::Key_BracketLeft), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      adjustSelectedTextFontSize(-2.0);
+    }
+  });
+  addShortcut(QKeySequence(Qt::Key_BracketRight), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      adjustSelectedTextFontSize(2.0);
+    }
+  });
+  addShortcut(QKeySequence(Qt::Key_Minus), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      adjustSelectedTextFontSize(-2.0);
+    }
+  });
+  addShortcut(QKeySequence(Qt::Key_Equal), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      adjustSelectedTextFontSize(2.0);
+    }
+  });
+  addShortcut(QKeySequence(Qt::ALT | Qt::Key_Up), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      adjustSelectedTextLineHeight(-0.1);
+    }
+  });
+  addShortcut(QKeySequence(Qt::ALT | Qt::Key_Down), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      adjustSelectedTextLineHeight(0.1);
+    }
+  });
+  addShortcut(QKeySequence(Qt::ALT | Qt::Key_BracketLeft), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      adjustSelectedTextLineHeight(-0.1);
+    }
+  });
+  addShortcut(QKeySequence(Qt::ALT | Qt::Key_BracketRight), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      adjustSelectedTextLineHeight(0.1);
+    }
+  });
+  addShortcut(QKeySequence(Qt::Key_Return), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      editSelectedTextNode();
+    }
+  });
+  addShortcut(QKeySequence(Qt::Key_Enter), [this]() {
+    if (!shouldIgnoreEditingShortcut()) {
+      editSelectedTextNode();
+    }
+  });
 }
 
 bool MainWindow::loadScene(const QString& scenePath) {
@@ -1551,6 +1590,13 @@ bool MainWindow::maybeResolveUnsavedChanges(const QString& actionLabel) {
   }
 
   return true;
+}
+
+bool MainWindow::shouldIgnoreEditingShortcut() const {
+  const auto* focus = QApplication::focusWidget();
+  return qobject_cast<const QLineEdit*>(focus) != nullptr ||
+         qobject_cast<const QPlainTextEdit*>(focus) != nullptr ||
+         qobject_cast<const QTextEdit*>(focus) != nullptr;
 }
 
 void MainWindow::resetHistory() {
