@@ -1,0 +1,8 @@
+[package]
+name = "scene_schema"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

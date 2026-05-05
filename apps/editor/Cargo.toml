@@ -1,0 +1,7 @@
+[package]
+name = "editor"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+scene_schema = { path = "../../crates/scene_schema" }

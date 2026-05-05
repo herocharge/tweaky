@@ -1,0 +1,90 @@
+{
+  "version": "0.1",
+  "document": {
+    "id": "doc_shapes_study",
+    "name": "Shapes Study",
+    "width": 1200,
+    "height": 1200,
+    "background": {
+      "type": "solid",
+      "color": "#f2efe7"
+    },
+    "resources": {
+      "images": {},
+      "fonts": {},
+      "palettes": {}
+    },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blendMode": "normal",
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "scaleX": 1,
+        "scaleY": 1,
+        "rotation": 0,
+        "opacity": 1
+      },
+      "params": {},
+      "style": {},
+      "children": [
+        {
+          "id": "circle",
+          "type": "Ellipse",
+          "name": "Circle",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 180,
+            "y": 180,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "radiusX": 180,
+            "radiusY": 180
+          },
+          "style": {
+            "fill": "#1f6feb"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "pill",
+          "type": "Rectangle",
+          "name": "Pill",
+          "visible": true,
+          "locked": false,
+          "blendMode": "multiply",
+          "transform": {
+            "x": 500,
+            "y": 540,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 12,
+            "opacity": 0.95
+          },
+          "params": {
+            "width": 420,
+            "height": 160,
+            "cornerRadius": 80
+          },
+          "style": {
+            "fill": "#fd8d3c"
+          },
+          "children": [],
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  }
+}

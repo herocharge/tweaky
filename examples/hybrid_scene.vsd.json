@@ -1,0 +1,99 @@
+{
+  "version": "0.1",
+  "document": {
+    "id": "doc_hybrid_scene",
+    "name": "Hybrid Scene",
+    "width": 1440,
+    "height": 1024,
+    "background": {
+      "type": "solid",
+      "color": "#e9e1d3"
+    },
+    "resources": {
+      "images": {
+        "paint_patch_01": {
+          "path": "assets/paint_patch_01.png",
+          "width": 1024,
+          "height": 1024
+        }
+      },
+      "fonts": {},
+      "palettes": {}
+    },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blendMode": "normal",
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "scaleX": 1,
+        "scaleY": 1,
+        "rotation": 0,
+        "opacity": 1
+      },
+      "params": {},
+      "style": {},
+      "children": [
+        {
+          "id": "paint_layer",
+          "type": "ImageLayer",
+          "name": "Paint Patch",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 180,
+            "y": 160,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "rotation": -4,
+            "opacity": 1
+          },
+          "params": {
+            "imageRef": "paint_patch_01",
+            "displayWidth": 820,
+            "displayHeight": 820,
+            "nativeScaleHint": 1.0
+          },
+          "style": {},
+          "children": [],
+          "meta": {
+            "promptProvenance": "Painterly floral brush texture"
+          }
+        },
+        {
+          "id": "caption",
+          "type": "Text",
+          "name": "Caption",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 940,
+            "y": 320,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "text": "Hybrid scenes are a feature, not a compromise.",
+            "fontSize": 44,
+            "fontFamily": "Inter",
+            "lineHeight": 1.2
+          },
+          "style": {
+            "fill": "#2f241f"
+          },
+          "children": [],
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  }
+}

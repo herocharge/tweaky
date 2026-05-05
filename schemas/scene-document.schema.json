@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tweaky.app/schemas/scene-document.schema.json",
+  "title": "Tweaky Scene Document",
+  "type": "object",
+  "required": ["version", "document"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "0.1"
+    },
+    "document": {
+      "$ref": "#/$defs/document"
+    }
+  },
+  "$defs": {
+    "document": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "width",
+        "height",
+        "background",
+        "resources",
+        "root"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "background": { "$ref": "#/$defs/background" },
+        "resources": { "$ref": "#/$defs/resources" },
+        "root": { "$ref": "#/$defs/node" }
+      }
+    },
+    "background": {
+      "type": "object",
+      "required": ["type", "color"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "solid"
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "required": ["images", "fonts", "palettes"],
+      "additionalProperties": false,
+      "properties": {
+        "images": {
+          "type": "object",
+          "additionalProperties": { "type": "object" }
+        },
+        "fonts": {
+          "type": "object",
+          "additionalProperties": { "type": "object" }
+        },
+        "palettes": {
+          "type": "object",
+          "additionalProperties": { "type": "object" }
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "name",
+        "visible",
+        "locked",
+        "blendMode",
+        "transform",
+        "params",
+        "style",
+        "children",
+        "meta"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": [
+            "Group",
+            "Rectangle",
+            "Ellipse",
+            "Path",
+            "Text",
+            "ImageLayer",
+            "Shadow",
+            "Blur"
+          ]
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "visible": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "blendMode": {
+          "type": "string",
+          "enum": ["normal", "multiply", "screen", "overlay"]
+        },
+        "transform": { "$ref": "#/$defs/transform" },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "style": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "meta": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "required": ["x", "y", "scaleX", "scaleY", "rotation", "opacity"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "scaleX": { "type": "number" },
+        "scaleY": { "type": "number" },
+        "rotation": { "type": "number" },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}

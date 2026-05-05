@@ -1,0 +1,92 @@
+{
+  "version": "0.1",
+  "document": {
+    "id": "doc_basic_poster",
+    "name": "Basic Poster",
+    "width": 1600,
+    "height": 900,
+    "background": {
+      "type": "solid",
+      "color": "#f5f1e8"
+    },
+    "resources": {
+      "images": {},
+      "fonts": {},
+      "palettes": {}
+    },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blendMode": "normal",
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "scaleX": 1,
+        "scaleY": 1,
+        "rotation": 0,
+        "opacity": 1
+      },
+      "params": {},
+      "style": {},
+      "children": [
+        {
+          "id": "bg_rect",
+          "type": "Rectangle",
+          "name": "Background Block",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 120,
+            "y": 100,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "width": 1360,
+            "height": 700,
+            "cornerRadius": 28
+          },
+          "style": {
+            "fill": "#dd6b42"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "headline",
+          "type": "Text",
+          "name": "Headline",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 200,
+            "y": 220,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "text": "TWEAK EVERYTHING",
+            "fontSize": 84,
+            "fontFamily": "Inter",
+            "lineHeight": 1.0
+          },
+          "style": {
+            "fill": "#fff8ee"
+          },
+          "children": [],
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  }
+}
