@@ -76,8 +76,6 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
 
   for (const auto& item : scene_.renderItems) {
     const QColor fill = item.fill.isValid() ? item.fill : QColor("#c8bfb1");
-    QColor stroke = fill.darker(135);
-    stroke.setAlphaF(0.9);
     painter.setOpacity(item.opacity);
 
     auto shadowOffsetForItem = [&](const SceneCanvasItemData& shadowItem) -> QPointF {
@@ -146,7 +144,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
                                 item.cornerRadius);
       });
-      painter.setPen(QPen(stroke, 1.5));
+      painter.setPen(Qt::NoPen);
       painter.setBrush(fill);
       painter.drawRoundedRect(mapSceneRect(item.bounds, canvasRect), item.cornerRadius,
                               item.cornerRadius);
@@ -161,7 +159,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         painter.setBrush(shadowColor);
         painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
       });
-      painter.setPen(QPen(stroke, 1.5));
+      painter.setPen(Qt::NoPen);
       painter.setBrush(fill);
       painter.drawEllipse(mapSceneRect(item.bounds, canvasRect));
     } else if (item.kind == "Path" && !item.points.isEmpty()) {
@@ -201,12 +199,12 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
       if (item.closed) {
         path.closeSubpath();
       }
-      painter.setPen(QPen(stroke, 2.0));
+      painter.setPen(item.closed ? Qt::NoPen : QPen(fill, 2.0));
       painter.setBrush(item.closed ? fill : Qt::NoBrush);
       painter.drawPath(path);
     } else if (item.kind == "Text" && item.hasOrigin) {
       QFont textFont = painter.font();
-      textFont.setPointSizeF(item.fontSize <= 0.0 ? 18.0 : item.fontSize);
+      textFont.setPixelSize(static_cast<int>(std::round(item.fontSize <= 0.0 ? 18.0 : item.fontSize)));
       if (!item.fontFamily.isEmpty()) {
         textFont.setFamily(item.fontFamily);
       }
@@ -230,13 +228,6 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
       painter.drawText(imageRect.adjusted(8.0, 8.0, -8.0, -8.0),
                        Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
                        item.imageRef.isEmpty() ? QString("ImageLayer") : item.imageRef);
-    }
-
-    if (item.nodeId == scene_.selectedNodeId && item.hasBounds) {
-      painter.setOpacity(1.0);
-      painter.setPen(QPen(QColor("#dd6b42"), 2.5, Qt::DashLine));
-      painter.setBrush(Qt::NoBrush);
-      painter.drawRect(mapSceneRect(item.bounds, canvasRect).adjusted(-3.0, -3.0, 3.0, 3.0));
     }
   }
 
