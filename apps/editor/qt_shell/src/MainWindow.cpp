@@ -82,6 +82,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     const QColor fill = item.fill.isValid() ? item.fill : QColor("#c8bfb1");
     painter.setOpacity(item.opacity);
     const bool dragSelectedItem = dragActive_ && item.nodeId == dragNodeId_;
+    const bool simplifyForInteraction = dragActive_;
 
     if (dragSelectedItem) {
       painter.save();
@@ -99,7 +100,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     };
 
     auto drawApproxBlur = [&](auto drawFn) {
-      if (item.blurRadius <= 0.0) {
+      if (simplifyForInteraction || item.blurRadius <= 0.0) {
         return;
       }
 
@@ -121,7 +122,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     };
 
     auto drawApproxShadow = [&](auto drawFn) {
-      if (!item.hasShadow) {
+      if (simplifyForInteraction || !item.hasShadow) {
         return;
       }
 
