@@ -108,6 +108,74 @@ pub struct Transform {
 
 pub type JsonObject = Map<String, Value>;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RectangleParams {
+    pub width: f64,
+    pub height: f64,
+    pub corner_radius: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EllipseParams {
+    pub radius_x: f64,
+    pub radius_y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextParams {
+    pub text: String,
+    pub font_size: f64,
+    pub font_family: Option<String>,
+    pub line_height: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageLayerParams {
+    pub image_ref: String,
+    pub display_width: f64,
+    pub display_height: f64,
+    pub native_scale_hint: Option<f64>,
+}
+
+impl SceneNode {
+    pub fn rectangle_params(&self) -> Option<RectangleParams> {
+        Some(RectangleParams {
+            width: get_number(&self.params, "width")?,
+            height: get_number(&self.params, "height")?,
+            corner_radius: get_number(&self.params, "cornerRadius").unwrap_or(0.0),
+        })
+    }
+
+    pub fn ellipse_params(&self) -> Option<EllipseParams> {
+        Some(EllipseParams {
+            radius_x: get_number(&self.params, "radiusX")?,
+            radius_y: get_number(&self.params, "radiusY")?,
+        })
+    }
+
+    pub fn text_params(&self) -> Option<TextParams> {
+        Some(TextParams {
+            text: get_string(&self.params, "text")?,
+            font_size: get_number(&self.params, "fontSize").unwrap_or(16.0),
+            font_family: get_string(&self.params, "fontFamily"),
+            line_height: get_number(&self.params, "lineHeight").unwrap_or(1.2),
+        })
+    }
+
+    pub fn image_layer_params(&self) -> Option<ImageLayerParams> {
+        Some(ImageLayerParams {
+            image_ref: get_string(&self.params, "imageRef")?,
+            display_width: get_number(&self.params, "displayWidth")?,
+            display_height: get_number(&self.params, "displayHeight")?,
+            native_scale_hint: get_number(&self.params, "nativeScaleHint"),
+        })
+    }
+
+    pub fn style_fill(&self) -> Option<String> {
+        get_string(&self.style, "fill")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationIssue {
     pub path: String,
@@ -226,6 +294,17 @@ fn validate_node(
     }
 }
 
+fn get_number(object: &JsonObject, key: &str) -> Option<f64> {
+    object.get(key)?.as_f64()
+}
+
+fn get_string(object: &JsonObject, key: &str) -> Option<String> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NodeType, SCHEMA_VERSION, parse_scene_str, validate_scene};
@@ -278,5 +357,28 @@ mod tests {
                 .iter()
                 .any(|issue| issue.message.contains("duplicate node id"))
         );
+    }
+
+    #[test]
+    fn exposes_typed_rectangle_params() {
+        let parsed = parse_scene_str(BASIC_POSTER).expect("example scene should parse");
+        let params = parsed.document.root.children[0]
+            .rectangle_params()
+            .expect("rectangle params should exist");
+
+        assert_eq!(params.width, 1360.0);
+        assert_eq!(params.corner_radius, 28.0);
+    }
+
+    #[test]
+    fn exposes_typed_text_params() {
+        let parsed = parse_scene_str(BASIC_POSTER).expect("example scene should parse");
+        let params = parsed.document.root.children[1]
+            .text_params()
+            .expect("text params should exist");
+
+        assert_eq!(params.text, "TWEAK EVERYTHING");
+        assert_eq!(params.font_size, 84.0);
+        assert_eq!(params.font_family.as_deref(), Some("Inter"));
     }
 }

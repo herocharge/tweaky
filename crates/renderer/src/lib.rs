@@ -1,5 +1,4 @@
-use scene_schema::{JsonObject, SceneFile, SceneNode, Transform};
-use serde_json::Value;
+use scene_schema::{SceneFile, SceneNode, Transform};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
@@ -163,59 +162,58 @@ fn node_to_render_item(node: &SceneNode) -> Option<RenderItem> {
 }
 
 fn rectangle_primitive(node: &SceneNode) -> Option<RectanglePrimitive> {
-    let width = get_number(&node.params, "width")?;
-    let height = get_number(&node.params, "height")?;
-    let corner_radius = get_number(&node.params, "cornerRadius").unwrap_or(0.0);
-    let bounds = transformed_rect(&node.transform, width, height);
+    let params = node.rectangle_params()?;
+    let bounds = transformed_rect(&node.transform, params.width, params.height);
 
     Some(RectanglePrimitive {
         bounds,
-        corner_radius,
-        fill: get_string(&node.style, "fill"),
+        corner_radius: params.corner_radius,
+        fill: node.style_fill(),
     })
 }
 
 fn ellipse_primitive(node: &SceneNode) -> Option<EllipsePrimitive> {
-    let radius_x = get_number(&node.params, "radiusX")?;
-    let radius_y = get_number(&node.params, "radiusY")?;
-    let bounds = transformed_rect(&node.transform, radius_x * 2.0, radius_y * 2.0);
+    let params = node.ellipse_params()?;
+    let bounds = transformed_rect(
+        &node.transform,
+        params.radius_x * 2.0,
+        params.radius_y * 2.0,
+    );
 
     Some(EllipsePrimitive {
         bounds,
-        fill: get_string(&node.style, "fill"),
+        fill: node.style_fill(),
     })
 }
 
 fn path_primitive(node: &SceneNode) -> PathPrimitive {
     PathPrimitive {
         bounds: None,
-        fill: get_string(&node.style, "fill"),
+        fill: node.style_fill(),
     }
 }
 
 fn text_primitive(node: &SceneNode) -> Option<TextPrimitive> {
-    let text = get_string(&node.params, "text")?;
-    let font_size = get_number(&node.params, "fontSize").unwrap_or(16.0);
+    let params = node.text_params()?;
 
     Some(TextPrimitive {
         origin: Point {
             x: node.transform.x,
             y: node.transform.y,
         },
-        text,
-        font_size,
-        font_family: get_string(&node.params, "fontFamily"),
-        fill: get_string(&node.style, "fill"),
+        text: params.text,
+        font_size: params.font_size,
+        font_family: params.font_family,
+        fill: node.style_fill(),
     })
 }
 
 fn image_layer_primitive(node: &SceneNode) -> Option<ImageLayerPrimitive> {
-    let width = get_number(&node.params, "displayWidth")?;
-    let height = get_number(&node.params, "displayHeight")?;
+    let params = node.image_layer_params()?;
 
     Some(ImageLayerPrimitive {
-        bounds: transformed_rect(&node.transform, width, height),
-        image_ref: get_string(&node.params, "imageRef"),
+        bounds: transformed_rect(&node.transform, params.display_width, params.display_height),
+        image_ref: Some(params.image_ref),
     })
 }
 
@@ -261,17 +259,6 @@ fn estimate_text_bounds(primitive: &TextPrimitive, transform: &Transform) -> Rec
     let height = lines.len() as f64 * primitive.font_size * 1.2 * transform.scale_y.abs();
 
     Rect::from_origin_size(primitive.origin, width, height)
-}
-
-fn get_number(object: &JsonObject, key: &str) -> Option<f64> {
-    object.get(key)?.as_f64()
-}
-
-fn get_string(object: &JsonObject, key: &str) -> Option<String> {
-    object
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
 }
 
 #[cfg(test)]

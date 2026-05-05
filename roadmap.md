@@ -498,3 +498,8 @@ Avoid:
 2. Start renderer crate design around Skia-facing interfaces without committing to full Qt integration yet
 3. Add shared geometry, bounds, and traversal contracts needed by rendering and editor selection
 4. Keep pushing work to `origin/main` as focused commits land
+
+Current leaning:
+
+- Keep the document wire format generic for MVP
+- Add typed Rust accessors for the most important node families instead of fully reworking serialized params immediately

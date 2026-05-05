@@ -59,6 +59,12 @@ These are current project decisions and should be treated as default assumptions
 - Painterly or hard-to-parameterize content can be represented with `ImageLayer`
 - `ImageLayer` is a first-class scene node, not a hack
 
+### Parameter modeling
+
+- The wire format remains generic JSON under `params`
+- Rust code is starting to use typed parameter accessors on top of that generic structure
+- Current typed accessors exist for rectangle, ellipse, text, and image-layer nodes
+
 ## Key Docs
 
 - [README.md](/Users/herocharge/fun/draw/README.md)
@@ -84,6 +90,7 @@ Currently implemented:
 - `scene_schema` crate with parsing and validation
 - `scene_runtime` crate with component registry, depth-first traversal, and command-based mutation
 - `renderer` crate with render plan generation, primitive extraction, and rough bounds estimation
+- `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`
@@ -93,9 +100,9 @@ Currently implemented:
 
 Expected next implementation step:
 
-- Decide how much node-specific typing to introduce on top of generic `params`
 - Start Skia-facing renderer integration on top of the current render-plan abstraction
 - Add shared geometry/bounds contracts wherever the editor will need them directly
+- Decide whether more node families need typed accessors before renderer integration deepens
 
 ## Intended Repo Shape
 
@@ -181,10 +188,10 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Decide whether validation should remain stringly in `params` for MVP or become partially typed per node
-2. Begin Skia-facing renderer integration on top of the current render plan
-3. Add scene graph geometry/bounds abstractions that renderer and editor can share more explicitly
-4. Start export-oriented render interfaces
+1. Begin Skia-facing renderer integration on top of the current render plan
+2. Add scene graph geometry/bounds abstractions that renderer and editor can share more explicitly
+3. Start export-oriented render interfaces
+4. Decide whether more node families need typed accessors before editor work expands
 5. Commit and push each slice separately
 
 ## Notes For Future Codex Sessions
