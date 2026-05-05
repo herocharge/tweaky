@@ -101,6 +101,7 @@ Currently implemented:
 - Closed `Path` nodes now participate in polygon-aware hit testing instead of only bounding-box selection
 - Style-level `blur` and `shadow` effects now affect bounds and Skia rendering
 - `editor` now has a real app-state scaffold, CLI loading path, hierarchy summary, and PNG export workflow
+- `apps/editor/qt_shell` now provides a compiled Qt Widgets shell prototype with hierarchy, inspector, and canvas placeholder panes
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
@@ -113,6 +114,7 @@ Expected next implementation step:
 
 - Choose the first Qt integration shape for hierarchy, canvas host, and inspector surfaces
 - Add the first canvas-host abstraction and document-open workflow boundaries that a future Qt shell can call into
+- Reduce duplicated scene-loading logic between the Rust editor app and the Qt shell prototype
 - Keep renderer/runtime boundaries stable while the desktop shell comes online
 
 ## Intended Repo Shape
@@ -202,8 +204,8 @@ The next likely sequence is:
 
 1. Define the first canvas host boundary between the desktop shell and renderer
 2. Add hierarchy and inspector-facing view-model slices to the editor app layer
-3. Preserve the current CLI/editor app workflow as a smoke-test path
-4. Wire in the real Qt shell once the platform/tooling boundary is ready
+3. Reduce duplicated scene-loading logic between the Rust editor app and the Qt prototype
+4. Preserve the current CLI/editor app workflow as a smoke-test path
 5. Commit and push each slice separately
 
 ## Notes For Future Codex Sessions

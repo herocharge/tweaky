@@ -4,7 +4,7 @@ This document captures the first Milestone 3 editor-shell boundary for `tweaky`.
 
 ## Goal
 
-Introduce a real application layer without blocking on full Qt availability in the local environment.
+Introduce a real application layer while preserving a clean separation between desktop shell code and core editor/runtime logic.
 
 ## Current Boundary
 
@@ -14,17 +14,17 @@ The editor app is currently split into:
 - `cli.rs`: lightweight command-line entry flow for smoke testing
 - `qt_shell.rs`: placeholder integration boundary for the future desktop shell
 - `main.rs`: top-level orchestration
+- `apps/editor/qt_shell`: Qt Widgets shell prototype
 
 ## Why This Boundary Exists
 
-Qt is the chosen long-term desktop shell, but Qt tooling is not installed in the current environment.
-
-Rather than stall on platform setup, the project now has:
+Rather than tie core editor logic directly to one UI layer, the project now has:
 
 - a real editor state model
 - a real document-open workflow
 - a real render/export workflow
-- a clean future insertion point for Qt-specific shell code
+- a compiled Qt Widgets shell prototype
+- a clean future insertion point for a stronger Rust/Qt bridge
 
 This keeps Milestone 3 moving without polluting core app logic with platform assumptions.
 
@@ -43,9 +43,16 @@ Recommended responsibility split:
 - Qt owns window chrome and widget composition
 - the canvas host bridges into renderer output
 
+Current prototype status:
+
+- Implemented as a Qt Widgets app under `apps/editor/qt_shell`
+- Loads `.vsd.json` scene data directly
+- Displays hierarchy, inspector, and canvas placeholder panes
+- Compiles successfully against local Qt 6
+
 ## Short-Term Next Steps
 
 1. Keep the editor state model stable as the shell evolves
-2. Add document-open and example-load commands at the app layer
-3. Introduce a first canvas-host abstraction
-4. Only then wire in the actual Qt boundary
+2. Introduce a first canvas-host abstraction
+3. Reduce duplicated scene-loading logic between the Qt shell and the Rust editor app
+4. Add hierarchy and inspector view-model slices that both shells can reuse

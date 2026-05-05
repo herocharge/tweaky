@@ -531,6 +531,7 @@ Current status:
 
 - Milestone 3 has started
 - The editor app now has a real non-Qt state/workflow scaffold
+- A Qt Widgets shell prototype now compiles locally
 - The next architectural step is a canvas-host boundary, not more renderer work
 
 Current leaning:

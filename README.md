@@ -18,6 +18,7 @@ Current implementation artifacts:
 - [crates/scene_runtime](./crates/scene_runtime): runtime registry, traversal, mutation commands, and shared geometry/bounds helpers
 - [crates/renderer](./crates/renderer): backend-agnostic render plan and optional Skia CPU raster backend, now consuming runtime geometry semantics
 - [Cargo.toml](./Cargo.toml): workspace root
+- [apps/editor/qt_shell](./apps/editor/qt_shell): Qt Widgets desktop shell prototype
 
 Current rendering coverage:
 
@@ -38,6 +39,13 @@ Useful renderer commands:
 
 - `cargo test`
 - `cargo test -p renderer --features skia-safe-backend`
+
+Useful editor commands:
+
+- `cargo run -p editor -- examples/basic_poster.vsd.json --export /tmp/tweaky-editor-smoke.png`
+- `cmake -S apps/editor/qt_shell -B build/qt_shell -DCMAKE_PREFIX_PATH=$(brew --prefix qt)`
+- `cmake --build build/qt_shell`
+- `./build/qt_shell/tweaky-editor-qt examples/basic_poster.vsd.json`
 
 Architecture direction:
 
@@ -60,4 +68,4 @@ Current project phase:
 
 - Milestone 1 complete
 - Milestone 2 functionally complete for the current MVP scope
-- Milestone 3 started with a real editor app scaffold
+- Milestone 3 started with a real editor app scaffold and compiled Qt shell prototype
