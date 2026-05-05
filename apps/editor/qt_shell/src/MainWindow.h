@@ -104,6 +104,7 @@ public:
 
 signals:
   void nodePicked(const QString& nodeId);
+  void nodeTextEditRequested(const QString& nodeId);
   void nodeDragPreview(double x, double y);
   void nodeDragCommitted(const QString& nodeId, double x, double y);
   void nodeResizePreview(const QString& nodeId, double x, double y, double width, double height);
@@ -112,6 +113,7 @@ signals:
 protected:
   void paintEvent(QPaintEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
+  void mouseDoubleClickEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void mouseReleaseEvent(QMouseEvent* event) override;
 
@@ -162,6 +164,7 @@ private slots:
                                      double width, double height);
   void handleCanvasNodeResizeCommitted(const QString& nodeId, double x, double y,
                                        double width, double height);
+  void editSelectedTextNode();
   void handleTreeSelectionChanged();
 
 private:
@@ -181,7 +184,18 @@ private:
   bool ensureWorkingCopyFromSource(const QString& sourcePath);
   bool saveWorkingCopyToPath(const QString& outputPath);
   bool maybeResolveUnsavedChanges(const QString& actionLabel);
+  void resetHistory();
+  QString readWorkingCopyText() const;
+  bool writeWorkingCopyText(const QString& contents);
+  void captureUndoSnapshot();
+  bool restoreSnapshot(const QString& snapshot, const QString& statusMessage);
+  bool canUndo() const;
+  bool canRedo() const;
+  void undoLastEdit();
+  void redoLastEdit();
   bool nudgeSelectedNode(double deltaX, double deltaY);
+  bool adjustSelectedTextFontSize(double delta);
+  bool updateTextNodeParams(const QString& nodeId, const QJsonObject& params, const QString& actionLabel);
   bool resizeNodeToBounds(const QString& nodeId, double x, double y, double width, double height);
   bool exportSceneToPng(const QString& outputPath);
   bool applyNodePropertyEdits(const QString& nodeId, const QString& newName, double x, double y,
@@ -207,4 +221,8 @@ private:
   CanvasWidget* canvas_ = nullptr;
   QTimer* autoApplyTimer_ = nullptr;
   bool suppressInspectorSignals_ = false;
+  QString cleanSnapshot_;
+  QStringList undoSnapshots_;
+  QStringList redoSnapshots_;
+  bool historyReplayInFlight_ = false;
 };

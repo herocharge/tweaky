@@ -358,6 +358,7 @@ Current status:
 - Qt inspector now supports a JSON-first property-edit loop by updating selected-node name, position, `params`, and `style` through the Rust editor layer
 - selected nodes can now be nudged with arrow keys, with `Shift` for larger moves, which improves the transform-edit loop without adding resize complexity yet
 - selected `Rectangle`, `Ellipse`, and `ImageLayer` nodes now support corner-handle resizing on the canvas, giving Milestone 3 its first direct geometry-edit affordance
+- editor edits now have lightweight undo/redo history, and `Text` nodes have a dedicated edit path through double-click content editing and keyboard font-size adjustments
 - Remaining milestone work is primarily interactivity and document lifecycle, not shell bootstrap
 
 ## Milestone 4: AI Integration

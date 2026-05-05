@@ -11,6 +11,7 @@
 #include <QHeaderView>
 #include <QFontDatabase>
 #include <QFormLayout>
+#include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -500,6 +501,23 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
   QWidget::mousePressEvent(event);
 }
 
+void CanvasWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+  if (event->button() == Qt::LeftButton) {
+    const auto nodeId = pickNodeAt(event->position());
+    if (!nodeId.isEmpty()) {
+      for (auto it = scene_.renderItems.crbegin(); it != scene_.renderItems.crend(); ++it) {
+        if (it->nodeId == nodeId && it->kind == "Text") {
+          emit nodeTextEditRequested(nodeId);
+          event->accept();
+          return;
+        }
+      }
+    }
+  }
+
+  QWidget::mouseDoubleClickEvent(event);
+}
+
 void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
   if (resizeActive_) {
     resizeCurrentWidgetPos_ = event->position();
@@ -591,6 +609,18 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 void MainWindow::keyPressEvent(QKeyEvent* event) {
+  if (event->matches(QKeySequence::Undo)) {
+    undoLastEdit();
+    event->accept();
+    return;
+  }
+
+  if (event->matches(QKeySequence::Redo)) {
+    redoLastEdit();
+    event->accept();
+    return;
+  }
+
   const auto* focus = QApplication::focusWidget();
   if (qobject_cast<const QLineEdit*>(focus) != nullptr ||
       qobject_cast<const QPlainTextEdit*>(focus) != nullptr ||
@@ -615,6 +645,25 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
     case Qt::Key_Down:
       handled = nudgeSelectedNode(0.0, step);
       break;
+    case Qt::Key_BracketLeft:
+    case Qt::Key_Minus:
+      handled = adjustSelectedTextFontSize(-2.0);
+      break;
+    case Qt::Key_BracketRight:
+    case Qt::Key_Equal:
+    case Qt::Key_Plus:
+      handled = adjustSelectedTextFontSize(2.0);
+      break;
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+      if (scene_.selectedNodeId.isEmpty() || !nodeIndex_.contains(scene_.selectedNodeId) ||
+          nodeIndex_.value(scene_.selectedNodeId).type != "Text") {
+        handled = false;
+      } else {
+        editSelectedTextNode();
+        handled = true;
+      }
+      break;
     default:
       break;
   }
@@ -635,6 +684,12 @@ void MainWindow::buildUi() {
   canvas_ = new CanvasWidget(this);
   setCentralWidget(canvas_);
   connect(canvas_, &CanvasWidget::nodePicked, this, &MainWindow::handleCanvasNodePicked);
+  connect(canvas_, &CanvasWidget::nodeTextEditRequested, this, [this](const QString& nodeId) {
+    if (auto* selectedItem = findTreeItemByNodeId(nodeId)) {
+      hierarchyTree_->setCurrentItem(selectedItem);
+    }
+    editSelectedTextNode();
+  });
   connect(canvas_, &CanvasWidget::nodeDragPreview, this, &MainWindow::handleCanvasNodeDragPreview);
   connect(canvas_, &CanvasWidget::nodeDragCommitted, this,
           &MainWindow::handleCanvasNodeDragCommitted);
@@ -722,6 +777,16 @@ void MainWindow::buildMenus() {
 
   fileMenu->addSeparator();
 
+  auto* undoAction = fileMenu->addAction("&Undo");
+  undoAction->setShortcut(QKeySequence::Undo);
+  connect(undoAction, &QAction::triggered, this, &MainWindow::undoLastEdit);
+
+  auto* redoAction = fileMenu->addAction("&Redo");
+  redoAction->setShortcut(QKeySequence::Redo);
+  connect(redoAction, &QAction::triggered, this, &MainWindow::redoLastEdit);
+
+  fileMenu->addSeparator();
+
   auto* saveAction = fileMenu->addAction("&Save");
   saveAction->setShortcut(QKeySequence::Save);
   connect(saveAction, &QAction::triggered, this, &MainWindow::saveScene);
@@ -751,12 +816,16 @@ bool MainWindow::loadScene(const QString& scenePath) {
   }
 
   if (loadSceneFromEditorCli(scene_.workingPath, scenePath)) {
+    cleanSnapshot_ = readWorkingCopyText();
+    resetHistory();
     refreshUiAfterSceneLoad(QString("Loaded %1 via editor view-model").arg(scenePath));
     markDirty(false);
     return true;
   }
 
   if (loadSceneFromRawJson(scene_.workingPath, scenePath)) {
+    cleanSnapshot_ = readWorkingCopyText();
+    resetHistory();
     refreshUiAfterSceneLoad(QString("Loaded %1 via raw JSON fallback").arg(scenePath));
     markDirty(false);
     return true;
@@ -817,6 +886,7 @@ void MainWindow::saveScene() {
   }
 
   markDirty(false);
+  cleanSnapshot_ = readWorkingCopyText();
   statusBar()->showMessage(QString("Saved %1").arg(scene_.sourcePath), 3000);
 }
 
@@ -844,6 +914,7 @@ void MainWindow::saveSceneAs() {
 
   scene_.sourcePath = outputPath;
   markDirty(false);
+  cleanSnapshot_ = readWorkingCopyText();
   statusBar()->showMessage(QString("Saved %1").arg(outputPath), 3000);
 }
 
@@ -948,13 +1019,22 @@ bool MainWindow::applyNodePropertyEdits(const QString& nodeId, const QString& ne
     return false;
   }
 
+  const QString previousSnapshot = readWorkingCopyText();
+  if (!historyReplayInFlight_) {
+    captureUndoSnapshot();
+  }
+
   const bool loaded = loadSceneFromEditorCli(
       scene_.workingPath, scene_.sourcePath,
       {"--rename-node", nodeId, newName, "--set-position", nodeId,
        QString::number(x, 'f', 2), QString::number(y, 'f', 2), "--set-params-json", nodeId,
        paramsJson, "--set-style-json", nodeId, styleJson});
+  if (!loaded && !historyReplayInFlight_ && !undoSnapshots_.isEmpty() &&
+      undoSnapshots_.last() == previousSnapshot) {
+    undoSnapshots_.removeLast();
+  }
   if (loaded) {
-    markDirty(true);
+    markDirty(readWorkingCopyText() != cleanSnapshot_);
   }
   return loaded;
 }
@@ -1349,6 +1429,126 @@ bool MainWindow::maybeResolveUnsavedChanges(const QString& actionLabel) {
   return true;
 }
 
+void MainWindow::resetHistory() {
+  undoSnapshots_.clear();
+  redoSnapshots_.clear();
+}
+
+QString MainWindow::readWorkingCopyText() const {
+  if (scene_.workingPath.isEmpty()) {
+    return QString();
+  }
+
+  QFile file(scene_.workingPath);
+  if (!file.open(QIODevice::ReadOnly)) {
+    return QString();
+  }
+
+  return QString::fromUtf8(file.readAll());
+}
+
+bool MainWindow::writeWorkingCopyText(const QString& contents) {
+  if (scene_.workingPath.isEmpty()) {
+    return false;
+  }
+
+  QSaveFile file(scene_.workingPath);
+  if (!file.open(QIODevice::WriteOnly)) {
+    return false;
+  }
+
+  if (file.write(contents.toUtf8()) < 0) {
+    file.cancelWriting();
+    return false;
+  }
+
+  return file.commit();
+}
+
+void MainWindow::captureUndoSnapshot() {
+  const QString snapshot = readWorkingCopyText();
+  if (snapshot.isEmpty()) {
+    return;
+  }
+
+  if (undoSnapshots_.isEmpty() || undoSnapshots_.last() != snapshot) {
+    undoSnapshots_.append(snapshot);
+  }
+  redoSnapshots_.clear();
+}
+
+bool MainWindow::restoreSnapshot(const QString& snapshot, const QString& statusMessage) {
+  if (snapshot.isEmpty() || !writeWorkingCopyText(snapshot)) {
+    return false;
+  }
+
+  if (!loadSceneFromEditorCli(scene_.workingPath, scene_.sourcePath)) {
+    return false;
+  }
+
+  markDirty(readWorkingCopyText() != cleanSnapshot_);
+  refreshUiAfterSceneLoad(statusMessage);
+  return true;
+}
+
+bool MainWindow::canUndo() const {
+  return !undoSnapshots_.isEmpty();
+}
+
+bool MainWindow::canRedo() const {
+  return !redoSnapshots_.isEmpty();
+}
+
+void MainWindow::undoLastEdit() {
+  if (!canUndo()) {
+    statusBar()->showMessage("Nothing to undo.", 2000);
+    return;
+  }
+
+  const QString currentSnapshot = readWorkingCopyText();
+  const QString snapshot = undoSnapshots_.takeLast();
+  if (!currentSnapshot.isEmpty() && (redoSnapshots_.isEmpty() || redoSnapshots_.last() != currentSnapshot)) {
+    redoSnapshots_.append(currentSnapshot);
+  }
+
+  historyReplayInFlight_ = true;
+  const bool restored = restoreSnapshot(snapshot, "Undid last edit");
+  historyReplayInFlight_ = false;
+
+  if (!restored) {
+    if (!currentSnapshot.isEmpty()) {
+      undoSnapshots_.append(snapshot);
+      redoSnapshots_.removeLast();
+    }
+    statusBar()->showMessage("Undo failed.", 2500);
+  }
+}
+
+void MainWindow::redoLastEdit() {
+  if (!canRedo()) {
+    statusBar()->showMessage("Nothing to redo.", 2000);
+    return;
+  }
+
+  const QString currentSnapshot = readWorkingCopyText();
+  const QString snapshot = redoSnapshots_.takeLast();
+  if (!currentSnapshot.isEmpty() && (undoSnapshots_.isEmpty() || undoSnapshots_.last() != currentSnapshot)) {
+    undoSnapshots_.append(currentSnapshot);
+  }
+
+  historyReplayInFlight_ = true;
+  const bool restored = restoreSnapshot(snapshot, "Redid edit");
+  historyReplayInFlight_ = false;
+
+  if (!restored) {
+    if (!currentSnapshot.isEmpty()) {
+      redoSnapshots_.append(snapshot);
+      undoSnapshots_.removeLast();
+    }
+    statusBar()->showMessage("Redo failed.", 2500);
+  }
+}
+
 bool MainWindow::nudgeSelectedNode(double deltaX, double deltaY) {
   if (scene_.selectedNodeId.isEmpty() || !nodeIndex_.contains(scene_.selectedNodeId)) {
     return false;
@@ -1371,6 +1571,45 @@ bool MainWindow::nudgeSelectedNode(double deltaX, double deltaY) {
                               .arg(nodeName)
                               .arg(nextX, 0, 'f', 2)
                               .arg(nextY, 0, 'f', 2));
+  return true;
+}
+
+bool MainWindow::adjustSelectedTextFontSize(double delta) {
+  if (scene_.selectedNodeId.isEmpty() || !nodeIndex_.contains(scene_.selectedNodeId)) {
+    return false;
+  }
+
+  const SceneNodeData node = nodeIndex_.value(scene_.selectedNodeId);
+  if (node.type != "Text") {
+    return false;
+  }
+
+  QJsonObject params = node.params;
+  const double currentSize = params.value("fontSize").toDouble(16.0);
+  const double nextSize = std::max(4.0, currentSize + delta);
+  params.insert("fontSize", nextSize);
+  return updateTextNodeParams(scene_.selectedNodeId, params,
+                              QString("Adjusted %1 font size to %2")
+                                  .arg(node.name)
+                                  .arg(nextSize, 0, 'f', 1));
+}
+
+bool MainWindow::updateTextNodeParams(const QString& nodeId, const QJsonObject& params,
+                                      const QString& actionLabel) {
+  if (!nodeIndex_.contains(nodeId)) {
+    return false;
+  }
+
+  const SceneNodeData node = nodeIndex_.value(nodeId);
+  const QString paramsJson = objectToPrettyJson(params);
+  const QString styleJson = objectToPrettyJson(node.style);
+
+  if (!applyNodePropertyEdits(nodeId, node.name, node.positionX, node.positionY, paramsJson,
+                              styleJson)) {
+    return false;
+  }
+
+  refreshUiAfterSceneLoad(actionLabel);
   return true;
 }
 
@@ -1407,6 +1646,32 @@ bool MainWindow::resizeNodeToBounds(const QString& nodeId, double x, double y, d
   suppressInspectorSignals_ = false;
 
   return applyNodePropertyEdits(nodeId, node.name, x, y, paramsJson, styleJson);
+}
+
+void MainWindow::editSelectedTextNode() {
+  if (scene_.selectedNodeId.isEmpty() || !nodeIndex_.contains(scene_.selectedNodeId)) {
+    return;
+  }
+
+  const SceneNodeData node = nodeIndex_.value(scene_.selectedNodeId);
+  if (node.type != "Text") {
+    return;
+  }
+
+  const QString currentText = node.params.value("text").toString();
+  bool accepted = false;
+  const QString nextText = QInputDialog::getMultiLineText(
+      this, "Edit Text", QString("Update text for %1").arg(node.name), currentText, &accepted);
+  if (!accepted || nextText == currentText) {
+    return;
+  }
+
+  QJsonObject params = node.params;
+  params.insert("text", nextText);
+  if (!updateTextNodeParams(scene_.selectedNodeId, params,
+                            QString("Updated text for %1").arg(node.name))) {
+    statusBar()->showMessage(QString("Failed to update text for %1").arg(node.name), 2500);
+  }
 }
 
 bool MainWindow::inspectorJsonIsValid(QString* errorMessage) const {

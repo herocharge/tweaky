@@ -56,13 +56,15 @@ Current prototype status:
 - Supports selected-node name, `x`/`y`, raw `params`, and raw `style` edits from the inspector via the Rust editor CLI
 - Auto-applies valid inspector edits and preserves selection on refresh by consuming the edited Rust view model directly
 - Maintains a temp working copy so `Save` and `Save As` are explicit document actions instead of every edit mutating the original file
+- Keeps lightweight snapshot-based undo/redo history against that working copy
 - Supports arrow-key nudging for selected nodes, with larger `Shift` steps, while leaving text-entry fields alone
 - Supports corner-handle resizing for `Rectangle`, `Ellipse`, and `ImageLayer` nodes by converting resized bounds back into node params through the Rust editor CLI
+- Supports first text-specific affordances: double-click a text node to edit its content, and use `[` / `]` or `-` / `+` to step font size for the selected text node
 - Compiles successfully against local Qt 6
 
 ## Short-Term Next Steps
 
 1. Keep the editor state model stable as the shell evolves
 2. Add more editable properties through the Rust app layer beyond name/position/raw-json
-3. Extend direct canvas editing beyond simple bound-based nodes, especially text and path-oriented manipulation
+3. Extend direct canvas editing beyond simple bound-based nodes, especially path-oriented manipulation and richer text layout controls
 4. Replace more fallback-only Qt logic with Rust-owned view/state data over time
