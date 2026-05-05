@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QHeaderView>
+#include <QFontDatabase>
 #include <QFormLayout>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -206,8 +207,14 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     } else if (item.kind == "Text" && item.hasOrigin) {
       QFont textFont = painter.font();
       textFont.setPixelSize(static_cast<int>(std::round(item.fontSize <= 0.0 ? 18.0 : item.fontSize)));
-      if (!item.fontFamily.isEmpty()) {
-        textFont.setFamily(item.fontFamily);
+      const QString requestedFamily = item.fontFamily.trimmed();
+      const auto families = QFontDatabase::families();
+      if (!requestedFamily.isEmpty() && families.contains(requestedFamily)) {
+        textFont.setFamily(requestedFamily);
+      } else if (families.contains("Arial")) {
+        textFont.setFamily("Arial");
+      } else if (families.contains("Helvetica")) {
+        textFont.setFamily("Helvetica");
       }
       painter.setFont(textFont);
       drawApproxBlur([&](const QColor& blurColor) {
