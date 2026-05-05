@@ -495,7 +495,7 @@ Avoid:
 ## Immediate Next Actions
 
 1. Expand schema validation where the current generic `params` model is too loose
-2. Start renderer crate design around Skia-facing interfaces without committing to full Qt integration yet
+2. Extend the current Skia CPU renderer beyond the initial primitive subset and formalize export APIs
 3. Add shared geometry, bounds, and traversal contracts needed by rendering and editor selection
 4. Keep pushing work to `origin/main` as focused commits land
 

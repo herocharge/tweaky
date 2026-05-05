@@ -89,7 +89,7 @@ Currently implemented:
 - Root Cargo workspace
 - `scene_schema` crate with parsing and validation
 - `scene_runtime` crate with component registry, depth-first traversal, and command-based mutation
-- `renderer` crate with render plan generation, primitive extraction, and rough bounds estimation
+- `renderer` crate with render plan generation, primitive extraction, rough bounds estimation, and optional Skia CPU PNG export
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - Placeholder crate for `ai_adapter`
 - `editor` binary scaffold
@@ -100,7 +100,7 @@ Currently implemented:
 
 Expected next implementation step:
 
-- Start Skia-facing renderer integration on top of the current render-plan abstraction
+- Expand Skia rendering coverage beyond the current rectangle/ellipse/text baseline
 - Add shared geometry/bounds contracts wherever the editor will need them directly
 - Decide whether more node families need typed accessors before renderer integration deepens
 
@@ -170,6 +170,7 @@ When code exists, verification should usually include the following where releva
 - Validate example scene documents
 - Confirm formatter/linter status if configured
 - Confirm the editor still loads example scenes
+- If touching Skia integration, run `cargo test -p renderer --features skia-safe-backend`
 
 For documentation-only changes:
 
@@ -188,9 +189,9 @@ Read CONTEXT.md, README.md, spec.md, and roadmap.md. Assume the project name is 
 
 The next likely sequence is:
 
-1. Begin Skia-facing renderer integration on top of the current render plan
+1. Expand Skia rendering coverage on top of the current CPU export path
 2. Add scene graph geometry/bounds abstractions that renderer and editor can share more explicitly
-3. Start export-oriented render interfaces
+3. Start export-oriented render interfaces around file output instead of just byte buffers
 4. Decide whether more node families need typed accessors before editor work expands
 5. Commit and push each slice separately
 

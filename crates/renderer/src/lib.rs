@@ -1,5 +1,8 @@
 use scene_schema::{SceneFile, SceneNode, Transform};
 
+#[cfg(feature = "skia-safe-backend")]
+pub mod skia_backend;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
     pub x: f64,

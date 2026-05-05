@@ -1,0 +1,212 @@
+use std::fmt;
+use std::path::Path;
+
+use skia_safe::{Color, EncodedImageFormat, Font, Paint, RRect, Rect as SkRect, Surface, surfaces};
+
+use crate::{
+    EllipsePrimitive, RenderBackground, RenderItem, RenderKind, RenderPlan, TextPrimitive,
+};
+
+#[derive(Debug)]
+pub enum SkiaRenderError {
+    SurfaceCreationFailed { width: i32, height: i32 },
+    EncodeFailed,
+    UnsupportedDimension { width: u32, height: u32 },
+    Io(std::io::Error),
+}
+
+impl fmt::Display for SkiaRenderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SurfaceCreationFailed { width, height } => {
+                write!(f, "failed to create Skia raster surface {width}x{height}")
+            }
+            Self::EncodeFailed => write!(f, "failed to encode rendered image as PNG"),
+            Self::UnsupportedDimension { width, height } => {
+                write!(f, "unsupported surface dimensions {width}x{height}")
+            }
+            Self::Io(error) => write!(f, "failed to write rendered file: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SkiaRenderError {}
+
+pub fn render_plan_to_png(
+    plan: &RenderPlan,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, SkiaRenderError> {
+    let width = i32::try_from(width)
+        .map_err(|_| SkiaRenderError::UnsupportedDimension { width, height })?;
+    let height = i32::try_from(height).map_err(|_| SkiaRenderError::UnsupportedDimension {
+        width: width as u32,
+        height,
+    })?;
+
+    let mut surface = surfaces::raster_n32_premul((width, height))
+        .ok_or(SkiaRenderError::SurfaceCreationFailed { width, height })?;
+
+    render_plan_to_surface(plan, &mut surface);
+
+    let image = surface.image_snapshot();
+    let data = image
+        .encode(None, EncodedImageFormat::PNG, None)
+        .ok_or(SkiaRenderError::EncodeFailed)?;
+
+    Ok(data.as_bytes().to_vec())
+}
+
+pub fn write_plan_png(
+    plan: &RenderPlan,
+    width: u32,
+    height: u32,
+    path: impl AsRef<Path>,
+) -> Result<(), SkiaRenderError> {
+    let png = render_plan_to_png(plan, width, height)?;
+    std::fs::write(path, png).map_err(SkiaRenderError::Io)?;
+    Ok(())
+}
+
+pub fn render_plan_to_surface(plan: &RenderPlan, surface: &mut Surface) {
+    let canvas = surface.canvas();
+    canvas.clear(parse_color(&plan.background));
+
+    for item in &plan.items {
+        draw_item(canvas, item);
+    }
+}
+
+fn draw_item(canvas: &skia_safe::Canvas, item: &RenderItem) {
+    match &item.kind {
+        RenderKind::Rectangle(primitive) => {
+            let paint = paint_for_fill(item, primitive.fill.as_deref());
+            let rect = sk_rect(primitive.bounds);
+            if primitive.corner_radius > 0.0 {
+                let rrect = RRect::new_rect_xy(
+                    rect,
+                    primitive.corner_radius as f32,
+                    primitive.corner_radius as f32,
+                );
+                canvas.draw_rrect(rrect, &paint);
+            } else {
+                canvas.draw_rect(rect, &paint);
+            }
+        }
+        RenderKind::Ellipse(primitive) => draw_ellipse(canvas, item, primitive),
+        RenderKind::Path(_primitive) => {
+            // Path rendering will become meaningful once path params are typed and validated.
+        }
+        RenderKind::Text(primitive) => draw_text(canvas, item, primitive),
+        RenderKind::ImageLayer(_primitive) => {
+            // Image loading and sampling will be wired in once the resource layer grows past metadata.
+        }
+    }
+}
+
+fn draw_ellipse(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &EllipsePrimitive) {
+    let paint = paint_for_fill(item, primitive.fill.as_deref());
+    canvas.draw_oval(sk_rect(primitive.bounds), &paint);
+}
+
+fn draw_text(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &TextPrimitive) {
+    let paint = paint_for_fill(item, primitive.fill.as_deref());
+    let mut font = Font::default();
+    font.set_size(primitive.font_size as f32);
+    canvas.draw_str(
+        primitive.text.as_str(),
+        (primitive.origin.x as f32, primitive.origin.y as f32),
+        &font,
+        &paint,
+    );
+}
+
+fn paint_for_fill(item: &RenderItem, fill: Option<&str>) -> Paint {
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    let color = with_opacity(
+        fill.map(parse_color_str).unwrap_or(Color::BLACK),
+        item.opacity,
+    );
+    paint.set_color(color);
+    paint
+}
+
+fn parse_color(background: &RenderBackground) -> Color {
+    parse_color_str(&background.color)
+}
+
+fn parse_color_str(input: &str) -> Color {
+    let hex = input.strip_prefix('#').unwrap_or(input);
+    match hex.len() {
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok();
+            let g = u8::from_str_radix(&hex[2..4], 16).ok();
+            let b = u8::from_str_radix(&hex[4..6], 16).ok();
+            match (r, g, b) {
+                (Some(r), Some(g), Some(b)) => Color::from_argb(255, r, g, b),
+                _ => Color::MAGENTA,
+            }
+        }
+        8 => {
+            let a = u8::from_str_radix(&hex[0..2], 16).ok();
+            let r = u8::from_str_radix(&hex[2..4], 16).ok();
+            let g = u8::from_str_radix(&hex[4..6], 16).ok();
+            let b = u8::from_str_radix(&hex[6..8], 16).ok();
+            match (a, r, g, b) {
+                (Some(a), Some(r), Some(g), Some(b)) => Color::from_argb(a, r, g, b),
+                _ => Color::MAGENTA,
+            }
+        }
+        _ => Color::MAGENTA,
+    }
+}
+
+fn sk_rect(rect: crate::Rect) -> SkRect {
+    SkRect::from_xywh(
+        rect.x as f32,
+        rect.y as f32,
+        rect.width as f32,
+        rect.height as f32,
+    )
+}
+
+fn with_opacity(color: Color, opacity: f64) -> Color {
+    let alpha = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color::from_argb(alpha, color.r(), color.g(), color.b())
+}
+
+#[cfg(test)]
+mod tests {
+    use scene_schema::parse_scene_str;
+
+    use crate::build_render_plan;
+
+    use super::{render_plan_to_png, write_plan_png};
+
+    const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
+
+    #[test]
+    fn skia_backend_exports_png() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
+        let plan = build_render_plan(&scene);
+        let png = render_plan_to_png(&plan, 1600, 900).expect("png export should succeed");
+
+        assert!(!png.is_empty());
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn skia_backend_writes_png_file() {
+        let scene = parse_scene_str(BASIC_POSTER).expect("scene should parse");
+        let plan = build_render_plan(&scene);
+        let path = std::env::temp_dir().join("tweaky-skia-export-test.png");
+
+        write_plan_png(&plan, 1600, 900, &path).expect("png file write should succeed");
+
+        let bytes = std::fs::read(&path).expect("written file should be readable");
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+
+        let _ = std::fs::remove_file(path);
+    }
+}

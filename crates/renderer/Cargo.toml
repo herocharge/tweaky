@@ -3,6 +3,11 @@ name = "renderer"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+skia-safe-backend = ["dep:skia-safe"]
+
 [dependencies]
 scene_schema = { path = "../scene_schema" }
 serde_json.workspace = true
+skia-safe = { version = "0.93.1", optional = true }
