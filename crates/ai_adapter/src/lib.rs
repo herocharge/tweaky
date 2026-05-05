@@ -6,6 +6,8 @@ use std::str::FromStr;
 
 const PELICAN_BICYCLE: &str = include_str!("../../../examples/pelican_bicycle.vsd.json");
 const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
+const SCENE_DOCUMENT_SCHEMA: &str = include_str!("../../../schemas/scene-document.schema.json");
+const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 
 pub const DEFAULT_PROVIDER_ENV_VAR: &str = "TWEAKY_AI_PROVIDER";
 pub const DEFAULT_MODEL_ENV_VAR: &str = "TWEAKY_AI_MODEL";
@@ -206,6 +208,8 @@ pub enum AiAdapterError {
         provider: ProviderKind,
         env_var: String,
     },
+    HttpFailed(String),
+    ApiResponseFailed(String),
     ProviderNotImplemented {
         provider: ProviderKind,
         details: String,
@@ -228,6 +232,8 @@ impl fmt::Display for AiAdapterError {
                     "{provider} requires an API key in environment variable {env_var}"
                 )
             }
+            Self::HttpFailed(error) => write!(f, "AI HTTP request failed: {error}"),
+            Self::ApiResponseFailed(error) => write!(f, "AI provider returned an error: {error}"),
             Self::ProviderNotImplemented { provider, details } => {
                 write!(f, "{provider} provider is not implemented yet: {details}")
             }
@@ -262,15 +268,12 @@ impl GeminiProvider {
 }
 
 impl SceneGenerator for GeminiProvider {
-    fn generate_scene_from_prompt(&self, _prompt: &str) -> Result<GeneratedScene, AiAdapterError> {
-        let _api_key = self.config.resolved_api_key()?;
-        Err(AiAdapterError::ProviderNotImplemented {
-            provider: ProviderKind::Gemini,
-            details: format!(
-                "configured for model {}. The provider abstraction is ready; the live HTTP integration is the next slice.",
-                self.config.model
-            ),
-        })
+    fn generate_scene_from_prompt(&self, prompt: &str) -> Result<GeneratedScene, AiAdapterError> {
+        let api_key = self.config.resolved_api_key()?.ok_or_else(|| {
+            AiAdapterError::InvalidProviderConfig("gemini API key resolution failed".to_string())
+        })?;
+        let response = request_gemini_scene(&self.config, &api_key, prompt)?;
+        validate_generated_response(response)
     }
 }
 
@@ -372,11 +375,223 @@ fn normalize_prompt(prompt: &str) -> String {
         .collect::<String>()
 }
 
+fn request_gemini_scene(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+) -> Result<AiSceneResponse, AiAdapterError> {
+    let endpoint = gemini_endpoint(config);
+    let request = GeminiGenerateContentRequest {
+        system_instruction: GeminiContent {
+            parts: vec![GeminiTextPart {
+                text: gemini_system_instruction(),
+            }],
+        },
+        contents: vec![GeminiContent {
+            parts: vec![GeminiTextPart {
+                text: gemini_user_prompt(prompt),
+            }],
+        }],
+        generation_config: GeminiGenerationConfig {
+            response_mime_type: "application/json".to_string(),
+            response_json_schema: response_envelope_schema(),
+            temperature: Some(0.4),
+        },
+    };
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|error| AiAdapterError::HttpFailed(error.to_string()))?;
+
+    let http_response = client
+        .post(endpoint)
+        .header("x-goog-api-key", api_key)
+        .json(&request)
+        .send()
+        .map_err(|error| AiAdapterError::HttpFailed(error.to_string()))?;
+
+    let status = http_response.status();
+    let response: GeminiGenerateContentResponse = http_response
+        .json()
+        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))?;
+
+    if !status.is_success() {
+        if let Some(error) = response.error {
+            return Err(AiAdapterError::ApiResponseFailed(format!(
+                "{} ({})",
+                error.message, error.status
+            )));
+        }
+        return Err(AiAdapterError::ApiResponseFailed(format!(
+            "Gemini returned HTTP status {status}"
+        )));
+    }
+
+    if let Some(error) = response.error {
+        return Err(AiAdapterError::ApiResponseFailed(format!(
+            "{} ({})",
+            error.message, error.status
+        )));
+    }
+
+    let json_text = response
+        .candidates
+        .into_iter()
+        .find_map(|candidate| candidate.content)
+        .and_then(|content| {
+            let combined = content
+                .parts
+                .into_iter()
+                .filter_map(|part| part.text)
+                .collect::<String>();
+            if combined.trim().is_empty() {
+                None
+            } else {
+                Some(combined)
+            }
+        })
+        .ok_or_else(|| {
+            AiAdapterError::ApiResponseFailed(
+                "Gemini response did not include any JSON text parts".to_string(),
+            )
+        })?;
+
+    serde_json::from_str::<AiSceneResponse>(&json_text)
+        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
+}
+
+fn gemini_endpoint(config: &ProviderConfig) -> String {
+    let base = config
+        .base_url
+        .as_deref()
+        .unwrap_or(DEFAULT_GEMINI_BASE_URL)
+        .trim_end_matches('/');
+    format!("{base}/models/{}:generateContent", config.model)
+}
+
+fn gemini_system_instruction() -> String {
+    format!(
+        concat!(
+            "You generate tweaky scene documents.\n",
+            "Return JSON only.\n",
+            "Return an object with keys mode, summary, document, and notes.\n",
+            "mode must be full_document.\n",
+            "document must be a complete tweaky scene JSON document that follows this schema.\n",
+            "Do not include markdown fences or prose outside JSON.\n",
+            "Prefer the node types Group, Rectangle, Ellipse, Path, Text, and ImageLayer.\n",
+            "Use named nodes, stable ids, explicit transforms, and editable structure.\n",
+            "If painterly detail is difficult to represent structurally, use ImageLayer only when necessary.\n",
+            "Schema:\n{}\n"
+        ),
+        SCENE_DOCUMENT_SCHEMA
+    )
+}
+
+fn gemini_user_prompt(prompt: &str) -> String {
+    format!(
+        concat!(
+            "Create a new tweaky scene document for this request:\n",
+            "{}\n\n",
+            "Canvas guidance:\n",
+            "- use a reasonable poster-like canvas size\n",
+            "- include a complete root hierarchy\n",
+            "- keep the result funny, editable, and visually readable\n",
+            "- notes should briefly explain key scene construction choices\n"
+        ),
+        prompt
+    )
+}
+
+fn response_envelope_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "mode": {
+                "type": "string",
+                "enum": ["full_document"]
+            },
+            "summary": {
+                "type": "string"
+            },
+            "document": {
+                "type": "object"
+            },
+            "notes": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            }
+        },
+        "required": ["mode", "summary", "document", "notes"]
+    })
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiGenerateContentRequest {
+    system_instruction: GeminiContent,
+    contents: Vec<GeminiContent>,
+    generation_config: GeminiGenerationConfig,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiContent {
+    parts: Vec<GeminiTextPart>,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiTextPart {
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct GeminiGenerationConfig {
+    response_mime_type: String,
+    response_json_schema: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiGenerateContentResponse {
+    #[serde(default)]
+    candidates: Vec<GeminiCandidate>,
+    #[serde(default)]
+    error: Option<GeminiErrorPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiCandidate {
+    #[serde(default)]
+    content: Option<GeminiCandidateContent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiCandidateContent {
+    #[serde(default)]
+    parts: Vec<GeminiCandidatePart>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiCandidatePart {
+    #[serde(default)]
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GeminiErrorPayload {
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    status: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AiAdapterError, GeneratedScene, ProviderConfig, ProviderKind, ResponseMode,
-        generate_scene_from_prompt_with_config,
+        AiAdapterError, DEFAULT_GEMINI_BASE_URL, GeneratedScene, ProviderConfig, ProviderKind,
+        ResponseMode, gemini_endpoint, generate_scene_from_prompt_with_config,
     };
     use std::env;
 
@@ -436,5 +651,14 @@ mod tests {
             .expect_err("gemini should require an API key");
 
         assert!(matches!(error, AiAdapterError::MissingApiKey { .. }));
+    }
+
+    #[test]
+    fn gemini_endpoint_uses_default_base_url() {
+        let config = ProviderConfig::for_provider(ProviderKind::Gemini);
+        assert_eq!(
+            gemini_endpoint(&config),
+            format!("{DEFAULT_GEMINI_BASE_URL}/models/gemini-2.5-flash:generateContent")
+        );
     }
 }

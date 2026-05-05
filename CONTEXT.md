@@ -114,7 +114,7 @@ Currently implemented:
 - shared text layout now supports `lineHeight`, `maxWidth`, and `align` end-to-end across schema parsing, runtime bounds, Qt preview, Rust view models, and Skia PNG export
 - `docs/ai-contract.md` now defines the first AI prompt/document/patch contract
 - `examples/pelican_bicycle.vsd.json` now serves as the first funny benchmark scene for "a drawing of a pelican riding a bicycle"
-- `ai_adapter` now has a provider abstraction with a real mock generation path, typed response envelopes, and extension seams for Gemini or openai-compatible backends
+- `ai_adapter` now has a provider abstraction with a real Gemini prompt-to-scene HTTP path, a mock fallback, typed response envelopes, and extension seams for openai-compatible backends
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`
@@ -199,6 +199,7 @@ When code exists, verification should usually include the following where releva
 - If touching the Qt shell boundary, rebuild `build/qt_shell` and smoke-launch `tweaky-editor-qt`
 - If touching the mock AI path, run `cargo test -p ai_adapter -p editor`
 - Smoke-test canned generation with `cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider mock --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
+- Smoke-test live Gemini generation with `GEMINI_API_KEY=... cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider gemini --ai-model gemini-2.5-flash --write-generated /tmp/pelican.vsd.json`
 - Keep secrets in ignored local env files or shell env vars, not committed configs
 
 For documentation-only changes:
@@ -220,7 +221,7 @@ The next likely sequence is:
 
 1. Preserve the current CLI/editor app workflow as a smoke-test path
 2. Build from mock AI generation into real scene revision flows
-3. Add live Gemini HTTP integration on top of the provider abstraction
+3. Add image-aware Gemini inputs and scene-revision flows on top of the current live generation path
 4. Keep preview/export consistency tightening as the editor matures
 5. Commit and push each slice separately
 

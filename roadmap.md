@@ -434,7 +434,7 @@ Current status:
 
 - `docs/ai-contract.md` exists and defines the first prompt/document/patch contract
 - `examples/pelican_bicycle.vsd.json` exists as the first benchmark scene
-- `crates/ai_adapter` now supports canned prompt routing, schema validation, and provider configuration seams
+- `crates/ai_adapter` now supports live Gemini prompt-to-scene generation, canned prompt routing, schema validation, and provider configuration seams
 - `editor` CLI can generate from a prompt while selecting provider/model/key-env overrides
 
 Risks:

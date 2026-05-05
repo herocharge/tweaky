@@ -84,4 +84,4 @@ Current project phase:
 - Milestone 1 complete
 - Milestone 2 functionally complete for the current MVP scope
 - Milestone 3 active with a real editor app scaffold, a compiled Qt shell prototype, a Rust-owned view-model boundary for hierarchy/inspector/canvas preview data, working Qt open/reload/save/save-as/export document actions, a temp working-copy edit loop with dirty-state tracking and undo/redo, keyboard nudging plus corner-handle resizing for simple bound-based nodes, direct path-point editing, and text layout support that now reaches preview/export via `lineHeight`, `maxWidth`, and `align`
-- Milestone 4 now has its first implementation seam through a mock AI adapter and prompt-to-scene CLI path
+- Milestone 4 now has a live Gemini prompt-to-scene path plus a mock fallback through the same provider interface
