@@ -19,7 +19,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const PELICAN_BICYCLE: &str = include_str!("../../../examples/pelican_bicycle.vsd.json");
 const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
 const HYBRID_SCENE: &str = include_str!("../../../examples/hybrid_scene.vsd.json");
-const SCENE_DOCUMENT_SCHEMA: &str = include_str!("../../../schemas/scene-document.schema.json");
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_GEMINI_FALLBACK_MODEL: &str = "gemini-2.5-flash-lite";
 const DEFAULT_GEMMA_FALLBACK_MODEL: &str = "gemma-4-31b-it";
@@ -103,13 +102,6 @@ pub struct SceneCritique {
     pub strengths: Vec<String>,
     pub issues: Vec<String>,
     pub revision_goals: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct StageNodeResponse {
-    pub summary: String,
-    pub children: Vec<SceneNode>,
-    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -769,7 +761,7 @@ fn try_staged_template_generation(
             let mut best_effort_candidate = None;
 
             for _ in 0..2 {
-                match request_stage_nodes(
+                match request_stage_operations(
                     config,
                     api_key,
                     prompt,
@@ -780,18 +772,28 @@ fn try_staged_template_generation(
                     repair_feedback.as_deref(),
                 ) {
                     Ok(stage_response) => {
-                        match validate_stage_children(
-                            &working_scene,
-                            &stage_response.children,
-                            Some(stage.slot_id.as_str()),
-                        ) {
+                        match validate_stage_operations(&working_scene, &stage_response, stage) {
                             Ok(()) => {
                                 let mut candidate_scene = working_scene.clone();
-                                merge_stage_children(
+                                let apply_issues = apply_scene_operations_to_scene(
                                     &mut candidate_scene,
-                                    stage_response.children,
-                                    Some(stage.slot_id.as_str()),
+                                    &stage_response.operations,
                                 );
+                                if !apply_issues.is_empty() {
+                                    let error = AiAdapterError::InvalidDocument(apply_issues);
+                                    if should_retry_same_model_with_feedback(
+                                        &error,
+                                        &repair_feedback,
+                                    ) {
+                                        repair_feedback = Some(build_repair_feedback(&error));
+                                        continue;
+                                    }
+                                    if is_retryable_gemini_error(&error) {
+                                        stage_failed = true;
+                                        break;
+                                    }
+                                    return Err(error);
+                                }
                                 best_effort_candidate = Some(candidate_scene.clone());
                                 match critique_stage_and_maybe_request_retry(
                                     config,
@@ -1304,7 +1306,7 @@ fn normalize_plan_background(background: &str) -> String {
     "#f7f1df".to_string()
 }
 
-fn request_stage_nodes(
+fn request_stage_operations(
     config: &ProviderConfig,
     api_key: &str,
     prompt: &str,
@@ -1313,7 +1315,7 @@ fn request_stage_nodes(
     scene: &SceneFile,
     plan: &ScenePlan,
     repair_feedback: Option<&str>,
-) -> Result<StageNodeResponse, AiAdapterError> {
+) -> Result<SceneOperationBatch, AiAdapterError> {
     let endpoint = gemini_endpoint(config, model);
     let request = GeminiGenerateContentRequest {
         system_instruction: GeminiContent {
@@ -1330,7 +1332,7 @@ fn request_stage_nodes(
         }],
         generation_config: GeminiGenerationConfig {
             response_mime_type: "application/json".to_string(),
-            response_json_schema: stage_nodes_schema(),
+            response_json_schema: scene_operations_schema(),
             temperature: Some(0.35),
         },
     };
@@ -1343,46 +1345,31 @@ fn request_stage_nodes(
         endpoint,
         &request,
     )?;
-    serde_json::from_str::<StageNodeResponse>(&json_text)
+    serde_json::from_str::<SceneOperationBatch>(&json_text)
         .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
 }
 
-fn merge_stage_children(
-    scene: &mut SceneFile,
-    children: Vec<SceneNode>,
-    default_parent_id: Option<&str>,
-) {
-    let _ = apply_stage_children_to_scene(scene, children, default_parent_id);
-}
-
-fn validate_stage_children(
+fn validate_stage_operations(
     scene: &SceneFile,
-    children: &[SceneNode],
-    default_parent_id: Option<&str>,
+    batch: &SceneOperationBatch,
+    stage: &StageSpec,
 ) -> Result<(), AiAdapterError> {
-    if children.is_empty() {
+    if batch.operations.is_empty() {
         return Err(AiAdapterError::InvalidDocument(vec![ValidationIssue {
-            path: "stage.children".to_string(),
-            message: "stage must return at least one child node".to_string(),
+            path: "stage.operations".to_string(),
+            message: "stage must return at least one operation".to_string(),
         }]));
     }
 
-    let mut issues = Vec::new();
-    let parent_targets = stage_parent_targets(children);
-    for child in children {
-        collect_stage_node_issues(
-            child,
-            &format!("stage.children.{}", child.id),
-            &parent_targets,
-            &mut issues,
-        );
+    let mut issues = validate_scene_operations(&batch.operations);
+    if !stage.operations_can_target_existing_nodes() {
+        issues.extend(validate_stage_create_targets(&batch.operations, &stage.slot_id));
     }
 
     let mut candidate = scene.clone();
-    issues.extend(apply_stage_children_to_scene(
+    issues.extend(apply_scene_operations_to_scene(
         &mut candidate,
-        children.to_vec(),
-        default_parent_id,
+        &batch.operations,
     ));
     issues.extend(validate_scene(&candidate));
 
@@ -1393,167 +1380,323 @@ fn validate_stage_children(
     }
 }
 
-fn collect_stage_node_issues(
-    node: &SceneNode,
-    path: &str,
-    parent_targets: &std::collections::HashSet<String>,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    match node.node_type {
-        scene_schema::NodeType::Group => {
-            if node.children.is_empty() && !parent_targets.contains(&node.id) {
-                issues.push(ValidationIssue {
-                    path: path.to_string(),
-                    message: "group nodes must contain meaningful child nodes".to_string(),
-                });
-            }
-        }
-        scene_schema::NodeType::Rectangle => {
-            if node.rectangle_params().is_none() {
-                issues.push(ValidationIssue {
-                    path: path.to_string(),
-                    message: "rectangle params must include width and height".to_string(),
-                });
-            }
-        }
-        scene_schema::NodeType::Ellipse => {
-            if node.ellipse_params().is_none() {
-                issues.push(ValidationIssue {
-                    path: path.to_string(),
-                    message: "ellipse params must include radiusX and radiusY".to_string(),
-                });
-            }
-        }
-        scene_schema::NodeType::Path => {
-            if node.path_params().is_none() {
-                issues.push(ValidationIssue {
-                    path: path.to_string(),
-                    message: "path params must include a non-empty points array and optional closed boolean".to_string(),
-                });
-            }
-        }
-        scene_schema::NodeType::Text => {
-            if node.text_params().is_none() {
-                issues.push(ValidationIssue {
-                    path: path.to_string(),
-                    message: "text params must include text and fontSize".to_string(),
-                });
-            }
-        }
-        scene_schema::NodeType::ImageLayer => {
-            if node.image_layer_params().is_none() {
-                issues.push(ValidationIssue {
-                    path: path.to_string(),
-                    message:
-                        "image layer params must include imageRef, displayWidth, and displayHeight"
-                            .to_string(),
-                });
-            }
-        }
-        scene_schema::NodeType::Shadow | scene_schema::NodeType::Blur => {}
-    }
-
-    for child in &node.children {
-        collect_stage_node_issues(
-            child,
-            &format!("{path}.children.{}", child.id),
-            parent_targets,
-            issues,
-        );
+impl StageSpec {
+    fn operations_can_target_existing_nodes(&self) -> bool {
+        matches!(self.kind, StageKind::Assembly)
     }
 }
 
-fn stage_parent_targets(children: &[SceneNode]) -> std::collections::HashSet<String> {
-    children
-        .iter()
-        .filter_map(stage_parent_id)
-        .collect::<std::collections::HashSet<_>>()
-}
-
-fn stage_parent_id(node: &SceneNode) -> Option<String> {
-    node.meta
-        .get("parent")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-}
-
-fn clear_stage_parent_meta(node: &mut SceneNode) {
-    node.meta.remove("parent");
-}
-
-fn apply_stage_children_to_scene(
-    scene: &mut SceneFile,
-    children: Vec<SceneNode>,
-    default_parent_id: Option<&str>,
+fn validate_stage_create_targets(
+    operations: &[SceneOperation],
+    default_parent_id: &str,
 ) -> Vec<ValidationIssue> {
-    let mut pending = children;
+    operations
+        .iter()
+        .filter_map(|operation| match operation_parent_id(operation) {
+            Some(parent_id) if parent_id != default_parent_id => Some(ValidationIssue {
+                path: "stage.operations".to_string(),
+                message: format!(
+                    "stage create operations must target the planned slot '{}' but found parent '{}'",
+                    default_parent_id, parent_id
+                ),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn validate_scene_operations(operations: &[SceneOperation]) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
-    let max_passes = pending.len().saturating_mul(2).max(1);
+    let mut created_ids = std::collections::HashSet::new();
 
-    for _ in 0..max_passes {
-        if pending.is_empty() {
-            break;
-        }
-
-        let mut next_pending = Vec::new();
-        let mut progressed = false;
-
-        for mut node in pending {
-            let parent_id = stage_parent_id(&node);
-            if let Some(parent_id) = parent_id {
-                clear_stage_parent_meta(&mut node);
-                if insert_node_under_parent(&mut scene.document.root, &parent_id, node.clone()) {
-                    progressed = true;
-                } else {
-                    let mut unresolved = node;
-                    unresolved
-                        .meta
-                        .insert("parent".to_string(), serde_json::Value::String(parent_id));
-                    next_pending.push(unresolved);
-                }
-            } else {
-                let inserted = if let Some(parent_id) = default_parent_id {
-                    insert_node_under_parent(&mut scene.document.root, parent_id, node.clone())
-                } else {
-                    scene.document.root.children.push(node.clone());
-                    true
-                };
-                if inserted {
-                    progressed = true;
-                } else {
-                    next_pending.push(node);
+    for (index, operation) in operations.iter().enumerate() {
+        let path = format!("stage.operations[{index}]");
+        match operation {
+            SceneOperation::CreateGroup { node_id, .. }
+            | SceneOperation::CreateRectangle { node_id, .. }
+            | SceneOperation::CreateEllipse { node_id, .. }
+            | SceneOperation::CreateText { node_id, .. }
+            | SceneOperation::CreateImageLayer { node_id, .. } => {
+                if !created_ids.insert(node_id.clone()) {
+                    issues.push(ValidationIssue {
+                        path: path.clone(),
+                        message: format!("duplicate created node id '{}'", node_id),
+                    });
                 }
             }
-        }
-
-        pending = next_pending;
-        if !progressed {
-            break;
-        }
-    }
-
-    for node in pending {
-        let path = format!("stage.children.{}", node.id);
-        if let Some(parent_id) = stage_parent_id(&node) {
-            issues.push(ValidationIssue {
-                path: format!("{path}.meta.parent"),
-                message: format!(
-                    "could not resolve parent reference '{}' while stitching stage output",
-                    parent_id
-                ),
-            });
-        } else if let Some(parent_id) = default_parent_id {
-            issues.push(ValidationIssue {
-                path,
-                message: format!(
-                    "could not resolve default slot target '{}' while stitching stage output",
-                    parent_id
-                ),
-            });
+            SceneOperation::CreatePath {
+                node_id, points, ..
+            } => {
+                if !created_ids.insert(node_id.clone()) {
+                    issues.push(ValidationIssue {
+                        path: path.clone(),
+                        message: format!("duplicate created node id '{}'", node_id),
+                    });
+                }
+                if points.is_empty() {
+                    issues.push(ValidationIssue {
+                        path,
+                        message: "create_path must include a non-empty points array".to_string(),
+                    });
+                }
+            }
+            SceneOperation::SetTransform { opacity, .. } => {
+                if let Some(opacity) = opacity && !(0.0..=1.0).contains(opacity) {
+                    issues.push(ValidationIssue {
+                        path,
+                        message: "opacity must be between 0 and 1".to_string(),
+                    });
+                }
+            }
+            _ => {}
         }
     }
 
     issues
+}
+
+fn operation_parent_id(operation: &SceneOperation) -> Option<&str> {
+    match operation {
+        SceneOperation::CreateGroup { parent_id, .. }
+        | SceneOperation::CreateRectangle { parent_id, .. }
+        | SceneOperation::CreateEllipse { parent_id, .. }
+        | SceneOperation::CreatePath { parent_id, .. }
+        | SceneOperation::CreateText { parent_id, .. }
+        | SceneOperation::CreateImageLayer { parent_id, .. } => Some(parent_id.as_str()),
+        SceneOperation::SetTransform { .. }
+        | SceneOperation::ReplaceParams { .. }
+        | SceneOperation::ReplaceStyle { .. }
+        | SceneOperation::DeleteNode { .. } => None,
+    }
+}
+
+fn apply_scene_operations_to_scene(
+    scene: &mut SceneFile,
+    operations: &[SceneOperation],
+) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    for (index, operation) in operations.iter().enumerate() {
+        if let Some(issue) = apply_scene_operation(scene, operation, index) {
+            issues.push(issue);
+        }
+    }
+    issues
+}
+
+fn apply_scene_operation(
+    scene: &mut SceneFile,
+    operation: &SceneOperation,
+    index: usize,
+) -> Option<ValidationIssue> {
+    let path = format!("stage.operations[{index}]");
+    match operation {
+        SceneOperation::CreateGroup {
+            node_id,
+            parent_id,
+            name,
+            x,
+            y,
+        } => insert_created_node(
+            scene,
+            parent_id,
+            build_group_node(node_id, name, *x, *y),
+            &path,
+        ),
+        SceneOperation::CreateRectangle {
+            node_id,
+            parent_id,
+            name,
+            x,
+            y,
+            width,
+            height,
+            corner_radius,
+            fill,
+        } => insert_created_node(
+            scene,
+            parent_id,
+            build_rectangle_node(node_id, name, *x, *y, *width, *height, *corner_radius, fill),
+            &path,
+        ),
+        SceneOperation::CreateEllipse {
+            node_id,
+            parent_id,
+            name,
+            x,
+            y,
+            radius_x,
+            radius_y,
+            fill,
+        } => insert_created_node(
+            scene,
+            parent_id,
+            build_ellipse_node(node_id, name, *x, *y, *radius_x, *radius_y, fill),
+            &path,
+        ),
+        SceneOperation::CreatePath {
+            node_id,
+            parent_id,
+            name,
+            x,
+            y,
+            points,
+            closed,
+            fill,
+        } => insert_created_node(
+            scene,
+            parent_id,
+            build_path_node(node_id, name, *x, *y, points, closed.unwrap_or(true), fill),
+            &path,
+        ),
+        SceneOperation::CreateText {
+            node_id,
+            parent_id,
+            name,
+            x,
+            y,
+            text,
+            font_size,
+            font_family,
+            line_height,
+            max_width,
+            align,
+            fill,
+        } => insert_created_node(
+            scene,
+            parent_id,
+            build_text_node(
+                node_id,
+                name,
+                *x,
+                *y,
+                text,
+                *font_size,
+                font_family.clone(),
+                *line_height,
+                *max_width,
+                align.clone(),
+                fill,
+            ),
+            &path,
+        ),
+        SceneOperation::CreateImageLayer {
+            node_id,
+            parent_id,
+            name,
+            x,
+            y,
+            image_ref,
+            display_width,
+            display_height,
+        } => insert_created_node(
+            scene,
+            parent_id,
+            build_image_layer_node(
+                node_id,
+                name,
+                *x,
+                *y,
+                image_ref,
+                *display_width,
+                *display_height,
+            ),
+            &path,
+        ),
+        SceneOperation::SetTransform {
+            node_id,
+            x,
+            y,
+            scale_x,
+            scale_y,
+            rotation,
+            opacity,
+        } => {
+            let Some(node) = find_scene_node_mut(&mut scene.document.root, node_id) else {
+                return Some(ValidationIssue {
+                    path,
+                    message: format!("could not resolve node '{}' for set_transform", node_id),
+                });
+            };
+            if let Some(x) = x {
+                node.transform.x = *x;
+            }
+            if let Some(y) = y {
+                node.transform.y = *y;
+            }
+            if let Some(scale_x) = scale_x {
+                node.transform.scale_x = *scale_x;
+            }
+            if let Some(scale_y) = scale_y {
+                node.transform.scale_y = *scale_y;
+            }
+            if let Some(rotation) = rotation {
+                node.transform.rotation = *rotation;
+            }
+            if let Some(opacity) = opacity {
+                node.transform.opacity = *opacity;
+            }
+            None
+        }
+        SceneOperation::ReplaceParams { node_id, params } => {
+            let Some(node) = find_scene_node_mut(&mut scene.document.root, node_id) else {
+                return Some(ValidationIssue {
+                    path,
+                    message: format!("could not resolve node '{}' for replace_params", node_id),
+                });
+            };
+            node.params = params.clone();
+            None
+        }
+        SceneOperation::ReplaceStyle { node_id, style } => {
+            let Some(node) = find_scene_node_mut(&mut scene.document.root, node_id) else {
+                return Some(ValidationIssue {
+                    path,
+                    message: format!("could not resolve node '{}' for replace_style", node_id),
+                });
+            };
+            node.style = style.clone();
+            None
+        }
+        SceneOperation::DeleteNode { node_id } => {
+            if scene.document.root.id == *node_id {
+                return Some(ValidationIssue {
+                    path,
+                    message: "cannot delete the root node".to_string(),
+                });
+            }
+            if remove_scene_node(&mut scene.document.root, node_id).is_some() {
+                None
+            } else {
+                Some(ValidationIssue {
+                    path,
+                    message: format!("could not resolve node '{}' for delete_node", node_id),
+                })
+            }
+        }
+    }
+}
+
+fn insert_created_node(
+    scene: &mut SceneFile,
+    parent_id: &str,
+    node: SceneNode,
+    path: &str,
+) -> Option<ValidationIssue> {
+    if find_scene_node(&scene.document.root, &node.id).is_some() {
+        return Some(ValidationIssue {
+            path: path.to_string(),
+            message: format!("node id '{}' already exists", node.id),
+        });
+    }
+
+    if insert_node_under_parent(&mut scene.document.root, parent_id, node) {
+        None
+    } else {
+        Some(ValidationIssue {
+            path: path.to_string(),
+            message: format!("could not resolve parent '{}' for create operation", parent_id),
+        })
+    }
 }
 
 fn insert_node_under_parent(current: &mut SceneNode, parent_id: &str, node: SceneNode) -> bool {
@@ -1569,6 +1712,260 @@ fn insert_node_under_parent(current: &mut SceneNode, parent_id: &str, node: Scen
     }
 
     false
+}
+
+fn find_scene_node<'a>(node: &'a SceneNode, id: &str) -> Option<&'a SceneNode> {
+    if node.id == id {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_scene_node(child, id))
+}
+
+fn find_scene_node_mut<'a>(node: &'a mut SceneNode, id: &str) -> Option<&'a mut SceneNode> {
+    if node.id == id {
+        return Some(node);
+    }
+    for child in &mut node.children {
+        if let Some(found) = find_scene_node_mut(child, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn remove_scene_node(node: &mut SceneNode, id: &str) -> Option<SceneNode> {
+    if let Some(index) = node.children.iter().position(|child| child.id == id) {
+        return Some(node.children.remove(index));
+    }
+    for child in &mut node.children {
+        if let Some(removed) = remove_scene_node(child, id) {
+            return Some(removed);
+        }
+    }
+    None
+}
+
+fn build_group_node(node_id: &str, name: &str, x: f64, y: f64) -> SceneNode {
+    SceneNode {
+        id: node_id.to_string(),
+        node_type: scene_schema::NodeType::Group,
+        name: name.to_string(),
+        visible: true,
+        locked: false,
+        blend_mode: BlendMode::Normal,
+        transform: Transform {
+            x,
+            y,
+            ..default_node_transform()
+        },
+        params: JsonObject::new(),
+        style: JsonObject::new(),
+        children: Vec::new(),
+        meta: JsonObject::new(),
+    }
+}
+
+fn build_rectangle_node(
+    node_id: &str,
+    name: &str,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    corner_radius: Option<f64>,
+    fill: &Option<String>,
+) -> SceneNode {
+    let mut params = JsonObject::new();
+    params.insert("width".to_string(), serde_json::Value::from(width));
+    params.insert("height".to_string(), serde_json::Value::from(height));
+    if let Some(corner_radius) = corner_radius {
+        params.insert(
+            "cornerRadius".to_string(),
+            serde_json::Value::from(corner_radius),
+        );
+    }
+    build_leaf_node(
+        node_id,
+        scene_schema::NodeType::Rectangle,
+        name,
+        x,
+        y,
+        params,
+        style_with_fill(fill),
+    )
+}
+
+fn build_ellipse_node(
+    node_id: &str,
+    name: &str,
+    x: f64,
+    y: f64,
+    radius_x: f64,
+    radius_y: f64,
+    fill: &Option<String>,
+) -> SceneNode {
+    let mut params = JsonObject::new();
+    params.insert("radiusX".to_string(), serde_json::Value::from(radius_x));
+    params.insert("radiusY".to_string(), serde_json::Value::from(radius_y));
+    build_leaf_node(
+        node_id,
+        scene_schema::NodeType::Ellipse,
+        name,
+        x,
+        y,
+        params,
+        style_with_fill(fill),
+    )
+}
+
+fn build_path_node(
+    node_id: &str,
+    name: &str,
+    x: f64,
+    y: f64,
+    points: &[SceneOpPoint],
+    closed: bool,
+    fill: &Option<String>,
+) -> SceneNode {
+    let mut params = JsonObject::new();
+    params.insert(
+        "points".to_string(),
+        serde_json::Value::Array(
+            points
+                .iter()
+                .map(|point| {
+                    serde_json::json!({
+                        "x": point.x,
+                        "y": point.y
+                    })
+                })
+                .collect(),
+        ),
+    );
+    params.insert("closed".to_string(), serde_json::Value::Bool(closed));
+    build_leaf_node(
+        node_id,
+        scene_schema::NodeType::Path,
+        name,
+        x,
+        y,
+        params,
+        style_with_fill(fill),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_text_node(
+    node_id: &str,
+    name: &str,
+    x: f64,
+    y: f64,
+    text: &str,
+    font_size: f64,
+    font_family: Option<String>,
+    line_height: Option<f64>,
+    max_width: Option<f64>,
+    align: Option<String>,
+    fill: &Option<String>,
+) -> SceneNode {
+    let mut params = JsonObject::new();
+    params.insert("text".to_string(), serde_json::Value::String(text.to_string()));
+    params.insert("fontSize".to_string(), serde_json::Value::from(font_size));
+    if let Some(font_family) = font_family {
+        params.insert(
+            "fontFamily".to_string(),
+            serde_json::Value::String(font_family),
+        );
+    }
+    if let Some(line_height) = line_height {
+        params.insert("lineHeight".to_string(), serde_json::Value::from(line_height));
+    }
+    if let Some(max_width) = max_width {
+        params.insert("maxWidth".to_string(), serde_json::Value::from(max_width));
+    }
+    if let Some(align) = align {
+        params.insert("align".to_string(), serde_json::Value::String(align));
+    }
+    build_leaf_node(
+        node_id,
+        scene_schema::NodeType::Text,
+        name,
+        x,
+        y,
+        params,
+        style_with_fill(fill),
+    )
+}
+
+fn build_image_layer_node(
+    node_id: &str,
+    name: &str,
+    x: f64,
+    y: f64,
+    image_ref: &str,
+    display_width: f64,
+    display_height: f64,
+) -> SceneNode {
+    let mut params = JsonObject::new();
+    params.insert(
+        "imageRef".to_string(),
+        serde_json::Value::String(image_ref.to_string()),
+    );
+    params.insert(
+        "displayWidth".to_string(),
+        serde_json::Value::from(display_width),
+    );
+    params.insert(
+        "displayHeight".to_string(),
+        serde_json::Value::from(display_height),
+    );
+    build_leaf_node(
+        node_id,
+        scene_schema::NodeType::ImageLayer,
+        name,
+        x,
+        y,
+        params,
+        JsonObject::new(),
+    )
+}
+
+fn build_leaf_node(
+    node_id: &str,
+    node_type: scene_schema::NodeType,
+    name: &str,
+    x: f64,
+    y: f64,
+    params: JsonObject,
+    style: JsonObject,
+) -> SceneNode {
+    SceneNode {
+        id: node_id.to_string(),
+        node_type,
+        name: name.to_string(),
+        visible: true,
+        locked: false,
+        blend_mode: BlendMode::Normal,
+        transform: Transform {
+            x,
+            y,
+            ..default_node_transform()
+        },
+        params,
+        style,
+        children: Vec::new(),
+        meta: JsonObject::new(),
+    }
+}
+
+fn style_with_fill(fill: &Option<String>) -> JsonObject {
+    let mut style = JsonObject::new();
+    if let Some(fill) = fill {
+        style.insert("fill".to_string(), serde_json::Value::String(fill.clone()));
+    }
+    style
 }
 
 fn critique_stage_and_maybe_request_retry(
@@ -2091,20 +2488,19 @@ fn gemini_stage_system_instruction(model: &str) -> String {
     format!(
         concat!(
             "Target model: {}.\n",
-            "You are generating one stage of a tweaky scene as editable child nodes.\n",
+            "You are generating one stage of a tweaky scene as editable scene operations.\n",
             "Return JSON only.\n",
-            "Return an object with keys summary, children, and notes.\n",
-            "children must be an array of valid tweaky scene nodes to insert under the root group.\n",
+            "Return an object with keys summary, operations, and notes.\n",
+            "operations must be an array of valid tweaky scene operations.\n",
             "Do not return a full document in this step.\n",
-            "Do not return empty children arrays.\n",
-            "Prefer Rectangle, Ellipse, Path, Text, and Group nodes.\n",
-            "If a Group is returned, it must contain meaningful drawable descendants.\n",
-            "Use concrete ids, names, transforms, params, and styles.\n",
-            "Follow the exact tweaky param conventions in the guide below.\n",
-            "Schema for each child node:\n{}\n"
+            "Do not return empty operations arrays.\n",
+            "Prefer concrete create/update operations over prose.\n",
+            "Use create operations for new nodes and set/replace operations for refinement.\n",
+            "Follow the exact tweaky operation and param conventions in the guide below.\n",
+            "Schema for the operation batch:\n{}\n"
         ),
         model,
-        node_schema_json()
+        serde_json::to_string_pretty(&scene_operations_schema()).unwrap_or_else(|_| "{}".to_string())
     )
 }
 
@@ -2168,20 +2564,19 @@ fn gemini_stage_user_prompt(
             "Target node ids for this stage: {}\n",
             "Relevant composition hints:\n{}\n\n",
             "Instructions:\n",
-            "- return only the new child nodes needed for this stage\n",
-            "- assume these nodes will be inserted under the target slot group automatically\n",
+            "- return only the scene operations needed for this stage\n",
+            "- for slot-filling stages, create new nodes under the target slot group using parent_id equal to the target slot id\n",
             "- respect the existing composition and avoid duplicating existing nodes\n",
             "- make the result editable and structurally clear\n",
-            "- use multiple nodes when that helps readability\n",
-            "- do not return an empty children array\n",
-            "- if this is an assembly/refinement stage, preserve the existing part nodes already in the target group and add only the connective, clarifying, or compositional nodes needed to make the group read correctly as a whole\n",
+            "- use multiple operations when that helps readability\n",
+            "- do not return an empty operations array\n",
+            "- if this is an assembly/refinement stage, preserve the existing part nodes already in the target group and use create/update operations only for the connective, clarifying, or compositional edits needed to make the group read correctly as a whole\n",
             "- Ellipse params use radiusX and radiusY, not width/height\n",
             "- Path params use points: [{{\"x\":..,\"y\":..}}] and optional closed, not SVG path data\n",
             "- Text params use text, fontSize, optional fontFamily, and optional lineHeight\n",
             "- Rectangle params use width, height, optional cornerRadius\n",
-            "- Group nodes must include non-empty children; use meta.parent only when you need to attach a sibling node under another node returned in the same stage\n",
             "- Keep the output focused on this stage's target node ids and avoid duplicating nodes from other stages\n\n",
-            "Quick param guide:\n{}\n",
+            "Quick operation and param guide:\n{}\n",
             "{}"
         ),
         prompt,
@@ -2323,29 +2718,6 @@ fn scene_critique_schema() -> serde_json::Value {
             }
         },
         "required": ["satisfactory", "summary", "strengths", "issues", "revision_goals"]
-    })
-}
-
-fn stage_nodes_schema() -> serde_json::Value {
-    let defs = scene_schema_defs();
-    serde_json::json!({
-        "$defs": defs,
-        "type": "object",
-        "properties": {
-            "summary": { "type": "string" },
-            "children": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                    "$ref": "#/$defs/node"
-                }
-            },
-            "notes": {
-                "type": "array",
-                "items": { "type": "string" }
-            }
-        },
-        "required": ["summary", "children", "notes"]
     })
 }
 
@@ -2528,31 +2900,18 @@ pub fn scene_operations_schema() -> serde_json::Value {
     })
 }
 
-fn node_schema_value() -> serde_json::Value {
-    let schema = serde_json::from_str::<serde_json::Value>(SCENE_DOCUMENT_SCHEMA)
-        .unwrap_or_else(|_| serde_json::json!({}));
-    schema
-        .get("$defs")
-        .and_then(|defs| defs.get("node"))
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({ "type": "object" }))
-}
-
-fn scene_schema_defs() -> serde_json::Value {
-    let schema = serde_json::from_str::<serde_json::Value>(SCENE_DOCUMENT_SCHEMA)
-        .unwrap_or_else(|_| serde_json::json!({}));
-    schema
-        .get("$defs")
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({}))
-}
-
-fn node_schema_json() -> String {
-    serde_json::to_string_pretty(&node_schema_value()).unwrap_or_else(|_| "{}".to_string())
-}
-
 fn stage_param_guide() -> &'static str {
     concat!(
+        "- create_group = {\"op\":\"create_group\",\"node_id\": string, \"parent_id\": string, \"name\": string, \"x\": number, \"y\": number}\n",
+        "- create_rectangle = {\"op\":\"create_rectangle\", ..., \"width\": number, \"height\": number, optional \"corner_radius\": number}\n",
+        "- create_ellipse = {\"op\":\"create_ellipse\", ..., \"radius_x\": number, \"radius_y\": number}\n",
+        "- create_path = {\"op\":\"create_path\", ..., \"points\": [{\"x\": number, \"y\": number}, ...], optional \"closed\": boolean}\n",
+        "- create_text = {\"op\":\"create_text\", ..., \"text\": string, \"font_size\": number, optional \"font_family\": string, optional \"line_height\": number}\n",
+        "- create_image_layer = {\"op\":\"create_image_layer\", ..., \"image_ref\": string, \"display_width\": number, \"display_height\": number}\n",
+        "- set_transform = {\"op\":\"set_transform\", \"node_id\": string, optional x/y/scale_x/scale_y/rotation/opacity}\n",
+        "- replace_params = {\"op\":\"replace_params\", \"node_id\": string, \"params\": {...}}\n",
+        "- replace_style = {\"op\":\"replace_style\", \"node_id\": string, \"style\": {...}}\n",
+        "- delete_node = {\"op\":\"delete_node\", \"node_id\": string}\n",
         "- Rectangle.params = {\"width\": number, \"height\": number, optional \"cornerRadius\": number}\n",
         "- Ellipse.params = {\"radiusX\": number, \"radiusY\": number}\n",
         "- Path.params = {\"points\": [{\"x\": number, \"y\": number}, ...], optional \"closed\": boolean}\n",
