@@ -309,6 +309,7 @@ pub struct EditorCanvasItemViewModel {
     pub max_width: Option<f64>,
     pub text_align: Option<String>,
     pub image_ref: Option<String>,
+    pub image_path: Option<String>,
     pub blur_radius: Option<f64>,
     pub shadow: Option<EditorShadowViewModel>,
 }
@@ -329,6 +330,7 @@ impl EditorCanvasItemViewModel {
             max_width,
             text_align,
             image_ref,
+            image_path,
         ) = match &item.kind {
             RenderKind::Rectangle(rectangle) => (
                 "Rectangle".to_string(),
@@ -344,6 +346,7 @@ impl EditorCanvasItemViewModel {
                 None,
                 None,
                 None,
+                None,
             ),
             RenderKind::Ellipse(ellipse) => (
                 "Ellipse".to_string(),
@@ -351,6 +354,7 @@ impl EditorCanvasItemViewModel {
                 None,
                 None,
                 Vec::new(),
+                None,
                 None,
                 None,
                 None,
@@ -378,6 +382,7 @@ impl EditorCanvasItemViewModel {
                 None,
                 None,
                 None,
+                None,
             ),
             RenderKind::Text(text_item) => (
                 "Text".to_string(),
@@ -392,6 +397,7 @@ impl EditorCanvasItemViewModel {
                 Some(text_item.line_height),
                 text_item.max_width,
                 text_item.align.clone(),
+                None,
                 None,
             ),
             RenderKind::ImageLayer(image) => (
@@ -408,6 +414,7 @@ impl EditorCanvasItemViewModel {
                 None,
                 None,
                 image.image_ref.clone(),
+                image.image_path.clone(),
             ),
         };
 
@@ -429,6 +436,7 @@ impl EditorCanvasItemViewModel {
             max_width,
             text_align,
             image_ref,
+            image_path,
             blur_radius: item.effects.blur_radius,
             shadow: item
                 .effects

@@ -2,13 +2,13 @@ use std::fmt;
 use std::path::Path;
 
 use skia_safe::{
-    BlurStyle, Color, EncodedImageFormat, Font, FontMgr, FontStyle, MaskFilter, Paint, PathBuilder,
-    RRect, Rect as SkRect, Surface, surfaces,
+    BlurStyle, Color, Data, EncodedImageFormat, Font, FontMgr, FontStyle, Image, MaskFilter, Paint,
+    PathBuilder, RRect, Rect as SkRect, Surface, surfaces,
 };
 
 use crate::{
-    EllipsePrimitive, PathPrimitive, RenderBackground, RenderItem, RenderKind, RenderPlan,
-    RenderShadow, TextPrimitive,
+    EllipsePrimitive, ImageLayerPrimitive, PathPrimitive, RenderBackground, RenderItem, RenderKind,
+    RenderPlan, RenderShadow, TextPrimitive,
 };
 
 #[derive(Debug)]
@@ -101,9 +101,7 @@ fn draw_item(canvas: &skia_safe::Canvas, item: &RenderItem) {
         RenderKind::Ellipse(primitive) => draw_ellipse(canvas, item, primitive),
         RenderKind::Path(primitive) => draw_path(canvas, item, primitive),
         RenderKind::Text(primitive) => draw_text(canvas, item, primitive),
-        RenderKind::ImageLayer(_primitive) => {
-            // Image loading and sampling will be wired in once the resource layer grows past metadata.
-        }
+        RenderKind::ImageLayer(primitive) => draw_image_layer(canvas, item, primitive),
     }
 }
 
@@ -141,6 +139,40 @@ fn draw_text(canvas: &skia_safe::Canvas, item: &RenderItem, primitive: &TextPrim
     let paint = paint_for_fill(item, primitive.fill.as_deref());
     let font = resolve_font(primitive);
     draw_text_lines(canvas, primitive, &font, &paint, 0.0, 0.0);
+}
+
+fn draw_image_layer(
+    canvas: &skia_safe::Canvas,
+    item: &RenderItem,
+    primitive: &ImageLayerPrimitive,
+) {
+    let rect = sk_rect(primitive.bounds);
+    if let Some(image) = load_image_layer(primitive) {
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        paint.set_color(with_opacity(Color::WHITE, item.opacity));
+        canvas.draw_image_rect(image, None, rect, &paint);
+        return;
+    }
+
+    let mut fill = Paint::default();
+    fill.set_anti_alias(true);
+    fill.set_color(with_opacity(parse_color_str("#efe7da"), item.opacity));
+    canvas.draw_rect(rect, &fill);
+
+    let mut stroke = Paint::default();
+    stroke.set_anti_alias(true);
+    stroke.set_style(skia_safe::paint::Style::Stroke);
+    stroke.set_stroke_width(2.0);
+    stroke.set_color(with_opacity(parse_color_str("#6e5a4d"), item.opacity));
+    canvas.draw_rect(rect, &stroke);
+}
+
+fn load_image_layer(primitive: &ImageLayerPrimitive) -> Option<Image> {
+    let path = primitive.image_path.as_deref()?;
+    let bytes = std::fs::read(path).ok()?;
+    let data = Data::new_copy(bytes.as_slice());
+    Image::from_encoded(data)
 }
 
 fn paint_for_fill(item: &RenderItem, fill: Option<&str>) -> Paint {

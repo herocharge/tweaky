@@ -115,6 +115,23 @@ pub struct SceneOperationBatch {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum SceneOperation {
+    UpsertImageResource {
+        image_ref: String,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        prompt: Option<String>,
+        #[serde(default)]
+        width: Option<f64>,
+        #[serde(default)]
+        height: Option<f64>,
+        #[serde(default)]
+        alpha_mode: Option<String>,
+        #[serde(default)]
+        generation_mode: Option<String>,
+        #[serde(default)]
+        group_id: Option<String>,
+    },
     CreateGroup {
         node_id: String,
         parent_id: String,
@@ -1027,9 +1044,16 @@ enum StageKind {
     Assembly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StageOutputMode {
+    Structured,
+    RasterPreferred,
+}
+
 #[derive(Debug, Clone)]
 struct StageSpec {
     kind: StageKind,
+    output_mode: StageOutputMode,
     id: String,
     slot_id: String,
     purpose: String,
@@ -1056,6 +1080,7 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
     if stages.is_empty() {
         stages.push(StageSpec {
             kind: StageKind::Subject,
+            output_mode: StageOutputMode::Structured,
             id: "primary_subject".to_string(),
             slot_id: "root".to_string(),
             purpose: format!(
@@ -1166,8 +1191,16 @@ fn collect_stages_from_hierarchy(
             &purpose,
             &[node.label.clone().unwrap_or_default()],
         );
+        let output_mode = classify_stage_output_mode(
+            kind.clone(),
+            &node.id,
+            &purpose,
+            &[node.label.clone().unwrap_or_default()],
+            None,
+        );
         stages.push(StageSpec {
             kind,
+            output_mode,
             id: slugify(&node.id),
             slot_id: node.id.clone(),
             purpose: format!("Fill the planned slot '{}'. {}", node.id, purpose),
@@ -1227,6 +1260,51 @@ fn classify_stage_kind(
     }
 }
 
+fn classify_stage_output_mode(
+    kind: StageKind,
+    id: &str,
+    purpose: &str,
+    extra_descriptors: &[String],
+    focus_group_id: Option<&str>,
+) -> StageOutputMode {
+    if matches!(kind, StageKind::Support | StageKind::Text) {
+        return StageOutputMode::Structured;
+    }
+
+    let extras = extra_descriptors
+        .iter()
+        .map(|value| value.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let focus = focus_group_id.unwrap_or_default().to_lowercase();
+    let descriptor = format!(
+        "{} {} {} {}",
+        id.to_lowercase(),
+        purpose.to_lowercase(),
+        extras,
+        focus
+    );
+
+    if descriptor.contains("pelican")
+        || descriptor.contains("bird")
+        || descriptor.contains("character")
+        || descriptor.contains("creature")
+        || descriptor.contains("portrait")
+        || descriptor.contains("head")
+        || descriptor.contains("face")
+        || descriptor.contains("beak")
+        || descriptor.contains("wing")
+        || descriptor.contains("body")
+        || descriptor.contains("feather")
+        || descriptor.contains("fur")
+        || descriptor.contains("hair")
+    {
+        StageOutputMode::RasterPreferred
+    } else {
+        StageOutputMode::Structured
+    }
+}
+
 fn group_assembly_stage(
     node: &ScenePlanHierarchyNode,
     composition_notes: &[String],
@@ -1255,6 +1333,13 @@ fn group_assembly_stage(
     let label = node.label.clone().unwrap_or_else(|| node.id.clone());
     Some(StageSpec {
         kind: StageKind::Assembly,
+        output_mode: classify_stage_output_mode(
+            StageKind::Assembly,
+            &node.id,
+            node.purpose.as_deref().unwrap_or(""),
+            &descriptors,
+            Some(node.id.as_str()),
+        ),
         id: format!("{}_assembly", slugify(&node.id)),
         slot_id: node.id.clone(),
         purpose: format!(
@@ -1373,8 +1458,16 @@ fn validate_stage_operations(
     }
 
     let mut issues = validate_scene_operations(&batch.operations);
+    issues.extend(validate_stage_image_references(scene, &batch.operations));
+    issues.extend(validate_stage_output_mode_expectations(
+        stage,
+        &batch.operations,
+    ));
     if !stage.operations_can_target_existing_nodes() {
-        issues.extend(validate_stage_create_targets(&batch.operations, &stage.slot_id));
+        issues.extend(validate_stage_create_targets(
+            &batch.operations,
+            &stage.slot_id,
+        ));
     }
 
     let mut candidate = scene.clone();
@@ -1416,13 +1509,73 @@ fn validate_stage_create_targets(
         .collect()
 }
 
+fn validate_stage_output_mode_expectations(
+    stage: &StageSpec,
+    operations: &[SceneOperation],
+) -> Vec<ValidationIssue> {
+    if !matches!(stage.output_mode, StageOutputMode::RasterPreferred) {
+        return Vec::new();
+    }
+
+    let uses_raster = operations.iter().any(|operation| {
+        matches!(
+            operation,
+            SceneOperation::UpsertImageResource { .. } | SceneOperation::CreateImageLayer { .. }
+        )
+    });
+
+    if uses_raster {
+        Vec::new()
+    } else {
+        vec![ValidationIssue {
+            path: "stage.operations".to_string(),
+            message: format!(
+                "stage '{}' is raster-preferred and should include an upsert_image_resource/create_image_layer pair",
+                stage.id
+            ),
+        }]
+    }
+}
+
 fn validate_scene_operations(operations: &[SceneOperation]) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
     let mut created_ids = std::collections::HashSet::new();
 
     for (index, operation) in operations.iter().enumerate() {
-        let path = format!("stage.operations[{index}]");
+        let issue_path = format!("stage.operations[{index}]");
         match operation {
+            SceneOperation::UpsertImageResource {
+                image_ref,
+                path,
+                prompt,
+                width,
+                height,
+                ..
+            } => {
+                if image_ref.trim().is_empty() {
+                    issues.push(ValidationIssue {
+                        path: issue_path.clone(),
+                        message: "image_ref must not be empty".to_string(),
+                    });
+                }
+                if path.as_deref().is_none() && prompt.as_deref().is_none() {
+                    issues.push(ValidationIssue {
+                        path: issue_path.clone(),
+                        message:
+                            "upsert_image_resource must include either path or prompt metadata"
+                                .to_string(),
+                    });
+                }
+                if width.as_ref().is_some_and(|value| *value <= 0.0)
+                    || height.as_ref().is_some_and(|value| *value <= 0.0)
+                {
+                    issues.push(ValidationIssue {
+                        path: issue_path,
+                        message: "image resource width and height must be positive when provided"
+                            .to_string(),
+                    });
+                }
+            }
             SceneOperation::CreateGroup { node_id, .. }
             | SceneOperation::CreateRectangle { node_id, .. }
             | SceneOperation::CreateEllipse { node_id, .. }
@@ -1430,7 +1583,7 @@ fn validate_scene_operations(operations: &[SceneOperation]) -> Vec<ValidationIss
             | SceneOperation::CreateImageLayer { node_id, .. } => {
                 if !created_ids.insert(node_id.clone()) {
                     issues.push(ValidationIssue {
-                        path: path.clone(),
+                        path: issue_path.clone(),
                         message: format!("duplicate created node id '{}'", node_id),
                     });
                 }
@@ -1440,22 +1593,60 @@ fn validate_scene_operations(operations: &[SceneOperation]) -> Vec<ValidationIss
             } => {
                 if !created_ids.insert(node_id.clone()) {
                     issues.push(ValidationIssue {
-                        path: path.clone(),
+                        path: issue_path.clone(),
                         message: format!("duplicate created node id '{}'", node_id),
                     });
                 }
                 if points.is_empty() {
                     issues.push(ValidationIssue {
-                        path,
+                        path: issue_path,
                         message: "create_path must include a non-empty points array".to_string(),
                     });
                 }
             }
             SceneOperation::SetTransform { opacity, .. } => {
-                if let Some(opacity) = opacity && !(0.0..=1.0).contains(opacity) {
+                if let Some(opacity) = opacity
+                    && !(0.0..=1.0).contains(opacity)
+                {
                     issues.push(ValidationIssue {
-                        path,
+                        path: issue_path,
                         message: "opacity must be between 0 and 1".to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    issues
+}
+
+fn validate_stage_image_references(
+    scene: &SceneFile,
+    operations: &[SceneOperation],
+) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    let mut available_refs = scene
+        .document
+        .resources
+        .images
+        .keys()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+
+    for (index, operation) in operations.iter().enumerate() {
+        match operation {
+            SceneOperation::UpsertImageResource { image_ref, .. } => {
+                available_refs.insert(image_ref.clone());
+            }
+            SceneOperation::CreateImageLayer { image_ref, .. } => {
+                if !available_refs.contains(image_ref) {
+                    issues.push(ValidationIssue {
+                        path: format!("stage.operations[{index}]"),
+                        message: format!(
+                            "create_image_layer references unknown image resource '{}'",
+                            image_ref
+                        ),
                     });
                 }
             }
@@ -1474,7 +1665,8 @@ fn operation_parent_id(operation: &SceneOperation) -> Option<&str> {
         | SceneOperation::CreatePath { parent_id, .. }
         | SceneOperation::CreateText { parent_id, .. }
         | SceneOperation::CreateImageLayer { parent_id, .. } => Some(parent_id.as_str()),
-        SceneOperation::SetTransform { .. }
+        SceneOperation::UpsertImageResource { .. }
+        | SceneOperation::SetTransform { .. }
         | SceneOperation::ReplaceParams { .. }
         | SceneOperation::ReplaceStyle { .. }
         | SceneOperation::DeleteNode { .. } => None,
@@ -1501,6 +1693,32 @@ fn apply_scene_operation(
 ) -> Option<ValidationIssue> {
     let path = format!("stage.operations[{index}]");
     match operation {
+        SceneOperation::UpsertImageResource {
+            image_ref,
+            path,
+            prompt,
+            width,
+            height,
+            alpha_mode,
+            generation_mode,
+            group_id,
+        } => {
+            let resource = build_image_resource_value(
+                path.as_deref(),
+                prompt.as_deref(),
+                *width,
+                *height,
+                alpha_mode.as_deref(),
+                generation_mode.as_deref(),
+                group_id.as_deref(),
+            );
+            scene
+                .document
+                .resources
+                .images
+                .insert(image_ref.clone(), resource);
+            None
+        }
         SceneOperation::CreateGroup {
             node_id,
             parent_id,
@@ -1705,7 +1923,10 @@ fn insert_created_node(
     } else {
         Some(ValidationIssue {
             path: path.to_string(),
-            message: format!("could not resolve parent '{}' for create operation", parent_id),
+            message: format!(
+                "could not resolve parent '{}' for create operation",
+                parent_id
+            ),
         })
     }
 }
@@ -1882,7 +2103,10 @@ fn build_text_node(
     fill: &Option<String>,
 ) -> SceneNode {
     let mut params = JsonObject::new();
-    params.insert("text".to_string(), serde_json::Value::String(text.to_string()));
+    params.insert(
+        "text".to_string(),
+        serde_json::Value::String(text.to_string()),
+    );
     params.insert("fontSize".to_string(), serde_json::Value::from(font_size));
     if let Some(font_family) = font_family {
         params.insert(
@@ -1891,7 +2115,10 @@ fn build_text_node(
         );
     }
     if let Some(line_height) = line_height {
-        params.insert("lineHeight".to_string(), serde_json::Value::from(line_height));
+        params.insert(
+            "lineHeight".to_string(),
+            serde_json::Value::from(line_height),
+        );
     }
     if let Some(max_width) = max_width {
         params.insert("maxWidth".to_string(), serde_json::Value::from(max_width));
@@ -1941,6 +2168,65 @@ fn build_image_layer_node(
         params,
         JsonObject::new(),
     )
+}
+
+fn build_image_resource_value(
+    path: Option<&str>,
+    prompt: Option<&str>,
+    width: Option<f64>,
+    height: Option<f64>,
+    alpha_mode: Option<&str>,
+    generation_mode: Option<&str>,
+    group_id: Option<&str>,
+) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    object.insert(
+        "kind".to_string(),
+        serde_json::Value::String("generated_patch".to_string()),
+    );
+    object.insert(
+        "status".to_string(),
+        serde_json::Value::String(if path.is_some() { "ready" } else { "planned" }.to_string()),
+    );
+
+    if let Some(path) = path {
+        object.insert(
+            "path".to_string(),
+            serde_json::Value::String(path.to_string()),
+        );
+    }
+    if let Some(prompt) = prompt {
+        object.insert(
+            "prompt".to_string(),
+            serde_json::Value::String(prompt.to_string()),
+        );
+    }
+    if let Some(width) = width {
+        object.insert("width".to_string(), serde_json::Value::from(width));
+    }
+    if let Some(height) = height {
+        object.insert("height".to_string(), serde_json::Value::from(height));
+    }
+    if let Some(alpha_mode) = alpha_mode {
+        object.insert(
+            "alphaMode".to_string(),
+            serde_json::Value::String(alpha_mode.to_string()),
+        );
+    }
+    if let Some(generation_mode) = generation_mode {
+        object.insert(
+            "generationMode".to_string(),
+            serde_json::Value::String(generation_mode.to_string()),
+        );
+    }
+    if let Some(group_id) = group_id {
+        object.insert(
+            "groupId".to_string(),
+            serde_json::Value::String(group_id.to_string()),
+        );
+    }
+
+    serde_json::Value::Object(object)
 }
 
 fn build_leaf_node(
@@ -2511,8 +2797,16 @@ fn gemini_stage_system_instruction(model: &str) -> String {
             "Schema for the operation batch:\n{}\n"
         ),
         model,
-        serde_json::to_string_pretty(&scene_operations_schema()).unwrap_or_else(|_| "{}".to_string())
+        serde_json::to_string_pretty(&scene_operations_schema())
+            .unwrap_or_else(|_| "{}".to_string())
     )
+}
+
+fn stage_output_mode_label(mode: StageOutputMode) -> &'static str {
+    match mode {
+        StageOutputMode::Structured => "structured",
+        StageOutputMode::RasterPreferred => "raster_preferred",
+    }
 }
 
 fn gemini_plan_user_prompt(
@@ -2562,6 +2856,23 @@ fn gemini_stage_user_prompt(
             )
         })
         .unwrap_or_default();
+    let raster_block = match stage.output_mode {
+        StageOutputMode::Structured => String::new(),
+        StageOutputMode::RasterPreferred => format!(
+            concat!(
+                "\nRaster preference for this stage:\n",
+                "- This stage is style-heavy and raster-preferred.\n",
+                "- Prefer returning an upsert_image_resource operation plus one create_image_layer operation for the subject patch.\n",
+                "- The image resource should capture a transparent raster patch for this stage's subject detail, not a full scene render.\n",
+                "- Use image_ref names derived from the stage id such as '{}_patch'.\n",
+                "- Include a concise prompt in upsert_image_resource.prompt describing the patch content and style.\n",
+                "- Include approximate native width and height in the image resource metadata.\n",
+                "- Parent the resulting create_image_layer under the target slot/group so it can be moved and critiqued with the rest of the scene.\n",
+                "- Only fall back to primitive geometry if a raster patch would be actively worse for editability.\n"
+            ),
+            stage.id
+        ),
+    };
 
     format!(
         concat!(
@@ -2571,6 +2882,7 @@ fn gemini_stage_user_prompt(
             "Current stage id: {}\n",
             "Target slot id: {}\n",
             "Stage purpose: {}\n\n",
+            "Preferred output mode: {}\n",
             "Focus group id: {}\n",
             "Target node ids for this stage: {}\n",
             "Relevant composition hints:\n{}\n\n",
@@ -2587,6 +2899,7 @@ fn gemini_stage_user_prompt(
             "- Text params use text, fontSize, optional fontFamily, and optional lineHeight\n",
             "- Rectangle params use width, height, optional cornerRadius\n",
             "- Keep the output focused on this stage's target node ids and avoid duplicating nodes from other stages\n\n",
+            "{}\n",
             "Quick operation and param guide:\n{}\n",
             "{}"
         ),
@@ -2596,9 +2909,11 @@ fn gemini_stage_user_prompt(
         stage.id,
         stage.slot_id,
         stage.purpose,
+        stage_output_mode_label(stage.output_mode),
         stage.focus_group_id.as_deref().unwrap_or("-"),
         stage.target_node_ids.join(", "),
         stage.composition_hints.join("\n"),
+        raster_block,
         stage_param_guide(),
         repair_block
     )
@@ -2746,6 +3061,22 @@ pub fn scene_operations_schema() -> serde_json::Value {
             },
             "scene_operation": {
                 "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "upsert_image_resource" },
+                            "image_ref": { "type": "string" },
+                            "path": { "type": "string" },
+                            "prompt": { "type": "string" },
+                            "width": { "type": "number" },
+                            "height": { "type": "number" },
+                            "alpha_mode": { "type": "string" },
+                            "generation_mode": { "type": "string" },
+                            "group_id": { "type": "string" }
+                        },
+                        "required": ["op", "image_ref"],
+                        "additionalProperties": false
+                    },
                     {
                         "type": "object",
                         "properties": {
@@ -2913,6 +3244,7 @@ pub fn scene_operations_schema() -> serde_json::Value {
 
 fn stage_param_guide() -> &'static str {
     concat!(
+        "- upsert_image_resource = {\"op\":\"upsert_image_resource\", \"image_ref\": string, optional \"path\": string, optional \"prompt\": string, optional \"width\": number, optional \"height\": number, optional \"alpha_mode\": string, optional \"generation_mode\": string, optional \"group_id\": string}\n",
         "- create_group = {\"op\":\"create_group\",\"node_id\": string, \"parent_id\": string, \"name\": string, \"x\": number, \"y\": number}\n",
         "- create_rectangle = {\"op\":\"create_rectangle\", ..., \"width\": number, \"height\": number, optional \"corner_radius\": number}\n",
         "- create_ellipse = {\"op\":\"create_ellipse\", ..., \"radius_x\": number, \"radius_y\": number}\n",
@@ -3121,9 +3453,9 @@ mod tests {
         AiAdapterError, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL,
         DEFAULT_GEMMA_FALLBACK_MODEL, GeneratedScene, ProviderConfig, ProviderKind, ResponseMode,
         SceneOperation, SceneOperationBatch, ScenePlan, ScenePlanCanvas, ScenePlanHierarchyNode,
-        ScenePlanNode, StageKind, StageSpec, can_finalize_staged_scene, gemini_endpoint,
-        gemini_model_attempts, generate_scene_from_prompt_with_config, scene_operations_schema,
-        scene_plan_schema,
+        ScenePlanNode, StageKind, StageOutputMode, StageSpec, can_finalize_staged_scene,
+        gemini_endpoint, gemini_model_attempts, generate_scene_from_prompt_with_config,
+        scene_operations_schema, scene_plan_schema,
     };
     use std::env;
     use std::sync::{Mutex, OnceLock};
@@ -3267,6 +3599,7 @@ mod tests {
     fn partial_staged_scene_requires_non_support_progress() {
         let support_only = vec![StageSpec {
             kind: StageKind::Support,
+            output_mode: StageOutputMode::Structured,
             id: "support".to_string(),
             slot_id: "support".to_string(),
             purpose: "support".to_string(),
@@ -3280,6 +3613,7 @@ mod tests {
             support_only[0].clone(),
             StageSpec {
                 kind: StageKind::Subject,
+                output_mode: StageOutputMode::Structured,
                 id: "pelican".to_string(),
                 slot_id: "pelican".to_string(),
                 purpose: "subject".to_string(),
@@ -3547,6 +3881,7 @@ mod tests {
     fn scene_operations_schema_includes_core_ops() {
         let schema = scene_operations_schema();
         let serialized = serde_json::to_string(&schema).expect("schema should serialize");
+        assert!(serialized.contains("upsert_image_resource"));
         assert!(serialized.contains("create_group"));
         assert!(serialized.contains("create_rectangle"));
         assert!(serialized.contains("set_transform"));
@@ -3558,6 +3893,16 @@ mod tests {
         let batch = SceneOperationBatch {
             summary: "Build a pelican group".to_string(),
             operations: vec![
+                SceneOperation::UpsertImageResource {
+                    image_ref: "pelican_patch".to_string(),
+                    path: Some("assets/pelican_patch.png".to_string()),
+                    prompt: Some("Painterly pelican cutout".to_string()),
+                    width: Some(768.0),
+                    height: Some(768.0),
+                    alpha_mode: Some("straight".to_string()),
+                    generation_mode: Some("raster_patch".to_string()),
+                    group_id: Some("pelican_group".to_string()),
+                },
                 SceneOperation::CreateGroup {
                     node_id: "pelican_group".to_string(),
                     parent_id: "main_subject_group".to_string(),
@@ -3592,5 +3937,100 @@ mod tests {
         let reparsed =
             serde_json::from_str::<SceneOperationBatch>(&json).expect("batch should parse");
         assert_eq!(reparsed, batch);
+    }
+
+    #[test]
+    fn pelican_subject_slots_prefer_raster_output() {
+        assert_eq!(
+            super::classify_stage_output_mode(
+                StageKind::Subject,
+                "pelican_body",
+                "Pelican body mass",
+                &["Body".to_string()],
+                None,
+            ),
+            StageOutputMode::RasterPreferred
+        );
+        assert_eq!(
+            super::classify_stage_output_mode(
+                StageKind::Subject,
+                "bicycle_frame",
+                "Bicycle frame geometry",
+                &["Frame".to_string()],
+                None,
+            ),
+            StageOutputMode::Structured
+        );
+    }
+
+    #[test]
+    fn image_layer_reference_can_be_introduced_by_resource_upsert() {
+        let scene = scene_schema::parse_scene_str(
+            r##"{
+  "version": "0.1",
+  "document": {
+    "id": "doc",
+    "name": "Hybrid",
+    "width": 800,
+    "height": 600,
+    "background": { "type": "solid", "color": "#ffffff" },
+    "resources": { "images": {}, "fonts": {}, "palettes": {} },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blendMode": "normal",
+      "transform": { "x": 0, "y": 0, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+      "params": {},
+      "style": {},
+      "children": [
+        {
+          "id": "pelican_body",
+          "type": "Group",
+          "name": "Pelican Body Slot",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": { "x": 0, "y": 0, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+          "params": {},
+          "style": {},
+          "children": [],
+          "meta": {}
+        }
+      ],
+      "meta": {}
+    }
+  }
+}"##,
+        )
+        .expect("scene should parse");
+
+        let operations = vec![
+            SceneOperation::UpsertImageResource {
+                image_ref: "pelican_body_patch".to_string(),
+                path: None,
+                prompt: Some("Painterly pelican torso patch".to_string()),
+                width: Some(640.0),
+                height: Some(480.0),
+                alpha_mode: Some("straight".to_string()),
+                generation_mode: Some("raster_patch".to_string()),
+                group_id: Some("pelican_group".to_string()),
+            },
+            SceneOperation::CreateImageLayer {
+                node_id: "pelican_body_patch_layer".to_string(),
+                parent_id: "pelican_body".to_string(),
+                name: "Pelican Body Patch".to_string(),
+                x: 0.0,
+                y: 0.0,
+                image_ref: "pelican_body_patch".to_string(),
+                display_width: 420.0,
+                display_height: 320.0,
+            },
+        ];
+
+        let issues = super::validate_stage_image_references(&scene, &operations);
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
     }
 }

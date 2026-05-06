@@ -78,6 +78,7 @@ struct SceneCanvasItemData {
     double maxWidth = 0.0;
     QString textAlign;
     QString imageRef;
+    QString imagePath;
     double blurRadius = 0.0;
     bool hasShadow = false;
     SceneShadowData shadow;

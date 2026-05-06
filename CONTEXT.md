@@ -121,6 +121,8 @@ Currently implemented:
 - the Gemini path can now render a generated scene to PNG and send that image back for one critique/revision round
 - the Gemini path now chooses a repo-native template family (`poster`, `shapes`, or `hybrid`) based on the prompt and conditions planning/generation on that scaffold
 - `ai_adapter` now also contains a typed scene-operation contract as the foundation for future Gemini tool-call style scene construction
+- `ai_adapter` now supports raster-preferred stages that can declare image resources and place them as `ImageLayer` patches through scene ops
+- the renderer/export path and editor view-model path now carry `ImageLayer` resource paths, and Skia export renders actual local raster assets when present
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`

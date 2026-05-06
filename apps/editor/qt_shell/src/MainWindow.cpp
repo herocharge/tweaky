@@ -12,6 +12,7 @@
 #include <QHeaderView>
 #include <QFontDatabase>
 #include <QFormLayout>
+#include <QImage>
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -354,13 +355,23 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
       const SceneRectData effectiveBounds =
           resizeSelectedItem ? resizeSceneRect : item.bounds;
       const QRectF imageRect = mapSceneRect(effectiveBounds, canvasRect);
-      painter.setPen(QPen(QColor("#6e5a4d"), 1.5, Qt::DashLine));
-      painter.setBrush(QColor("#efe7da"));
-      painter.drawRect(imageRect);
-      painter.setPen(QColor("#6e5a4d"));
-      painter.drawText(imageRect.adjusted(8.0, 8.0, -8.0, -8.0),
-                       Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
-                       item.imageRef.isEmpty() ? QString("ImageLayer") : item.imageRef);
+      bool drewImage = false;
+      if (!item.imagePath.isEmpty()) {
+        QImage image(item.imagePath);
+        if (!image.isNull()) {
+          painter.drawImage(imageRect, image);
+          drewImage = true;
+        }
+      }
+      if (!drewImage) {
+        painter.setPen(QPen(QColor("#6e5a4d"), 1.5, Qt::DashLine));
+        painter.setBrush(QColor("#efe7da"));
+        painter.drawRect(imageRect);
+        painter.setPen(QColor("#6e5a4d"));
+        painter.drawText(imageRect.adjusted(8.0, 8.0, -8.0, -8.0),
+                         Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap,
+                         item.imageRef.isEmpty() ? QString("ImageLayer") : item.imageRef);
+      }
     }
 
     if (dragSelectedItem || resizeSelectedItem) {
@@ -1361,6 +1372,7 @@ bool MainWindow::loadSceneFromEditorCli(const QString& scenePath, const QString&
     item.maxWidth = object.value("max_width").toDouble(0.0);
     item.textAlign = object.value("text_align").toString();
     item.imageRef = object.value("image_ref").toString();
+    item.imagePath = object.value("image_path").toString();
     item.blurRadius = object.value("blur_radius").toDouble(0.0);
 
     const auto shadow = object.value("shadow").toObject();

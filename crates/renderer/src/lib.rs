@@ -86,6 +86,7 @@ pub struct TextPrimitive {
 pub struct ImageLayerPrimitive {
     pub bounds: Rect,
     pub image_ref: Option<String>,
+    pub image_path: Option<String>,
 }
 
 pub trait RenderBackend {
@@ -100,6 +101,7 @@ pub fn build_render_plan(scene: &SceneFile) -> RenderPlan {
     collect_render_items(
         &scene.document.root,
         &WorldTransform::identity(),
+        &scene.document.resources.images,
         &mut items,
     );
 
@@ -122,19 +124,24 @@ pub fn render_with_backend<B: RenderBackend>(
     Ok(())
 }
 
-fn collect_render_items(node: &SceneNode, parent: &WorldTransform, items: &mut Vec<RenderItem>) {
+fn collect_render_items(
+    node: &SceneNode,
+    parent: &WorldTransform,
+    image_resources: &std::collections::HashMap<String, serde_json::Value>,
+    items: &mut Vec<RenderItem>,
+) {
     if !node.visible {
         return;
     }
 
     let world = WorldTransform::compose(parent, &node.transform);
 
-    if let Some(item) = node_to_render_item(node, parent, &world) {
+    if let Some(item) = node_to_render_item(node, parent, &world, image_resources) {
         items.push(item);
     }
 
     for child in &node.children {
-        collect_render_items(child, &world, items);
+        collect_render_items(child, &world, image_resources, items);
     }
 }
 
@@ -142,6 +149,7 @@ fn node_to_render_item(
     node: &SceneNode,
     parent: &WorldTransform,
     world: &WorldTransform,
+    image_resources: &std::collections::HashMap<String, serde_json::Value>,
 ) -> Option<RenderItem> {
     let kind = match node.node_type {
         scene_schema::NodeType::Group
@@ -154,7 +162,7 @@ fn node_to_render_item(
         scene_schema::NodeType::Path => RenderKind::Path(path_primitive(node, parent, world)),
         scene_schema::NodeType::Text => RenderKind::Text(text_primitive(node, world)?),
         scene_schema::NodeType::ImageLayer => {
-            RenderKind::ImageLayer(image_layer_primitive(node, parent)?)
+            RenderKind::ImageLayer(image_layer_primitive(node, parent, image_resources)?)
         }
     };
 
@@ -242,12 +250,23 @@ fn text_primitive(node: &SceneNode, world: &WorldTransform) -> Option<TextPrimit
     })
 }
 
-fn image_layer_primitive(node: &SceneNode, parent: &WorldTransform) -> Option<ImageLayerPrimitive> {
+fn image_layer_primitive(
+    node: &SceneNode,
+    parent: &WorldTransform,
+    image_resources: &std::collections::HashMap<String, serde_json::Value>,
+) -> Option<ImageLayerPrimitive> {
     let params = node.image_layer_params()?;
+    let image_path = image_resources
+        .get(&params.image_ref)
+        .and_then(|value| value.as_object())
+        .and_then(|object| object.get("path"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
 
     Some(ImageLayerPrimitive {
         bounds: bounds_for_node_with_transform(node, parent)?,
         image_ref: Some(params.image_ref),
+        image_path,
     })
 }
 
@@ -280,7 +299,21 @@ mod tests {
         let scene = parse_scene_str(HYBRID_SCENE).expect("scene should parse");
         let plan = build_render_plan(&scene);
 
-        assert!(plan.items.iter().any(|item| item.node_id == "paint_layer"));
+        let item = plan
+            .items
+            .iter()
+            .find(|item| item.node_id == "paint_layer")
+            .expect("paint layer item should exist");
+        match &item.kind {
+            super::RenderKind::ImageLayer(image) => {
+                assert_eq!(image.image_ref.as_deref(), Some("paint_patch_01"));
+                assert_eq!(
+                    image.image_path.as_deref(),
+                    Some("assets/paint_patch_01.png")
+                );
+            }
+            other => panic!("expected image layer render kind, found {other:?}"),
+        }
     }
 
     #[test]

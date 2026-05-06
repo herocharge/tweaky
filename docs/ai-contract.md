@@ -297,6 +297,15 @@ The likely long-term model is hybrid:
 
 The current MVP node for that is `ImageLayer`.
 
+The first concrete hybrid contract is:
+
+- `upsert_image_resource`
+- `create_image_layer`
+
+This lets a raster-preferred stage declare a patch resource in `document.resources.images` and then place it into the scene as an editable `ImageLayer` node under the planned group or slot.
+
+That means style-heavy stages such as `pelican_body`, `pelican_head_group`, or later anime-like hair/face/clothing regions do not have to pretend they are well-served by primitive geometry.
+
 A likely future refinement is a first-class stylized raster node such as `PaintPatch`, which would extend the `ImageLayer` idea with better metadata for:
 
 - intended scale behavior

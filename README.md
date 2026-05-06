@@ -30,6 +30,7 @@ Current rendering coverage:
 - `Text`
 - `Path` with point-list geometry
 - `ImageLayer` planning support
+- `ImageLayer` resource-path rendering in Skia export and editor view models
 - style-level `blur` and `shadow` effects on drawable nodes
 
 Current interaction coverage:
@@ -46,6 +47,7 @@ Useful renderer commands:
 Useful editor commands:
 
 - `cargo run -p editor -- examples/basic_poster.vsd.json --export /tmp/tweaky-editor-smoke.png`
+- `cargo run -p editor -- examples/hybrid_scene.vsd.json --export /tmp/tweaky-hybrid-smoke.png`
 - `cargo run -p editor -- examples/basic_poster.vsd.json --dump-view-model`
 - `cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider mock --write-generated /tmp/mock-pelican.vsd.json --dump-view-model`
 - `cargo run -p editor -- --prompt "a drawing of a pelican riding a bicycle" --ai-provider gemini --ai-model gemini-2.5-flash --ai-api-key-env GEMINI_API_KEY --write-generated /tmp/pelican.vsd.json`
