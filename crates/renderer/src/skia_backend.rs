@@ -2,8 +2,8 @@ use std::fmt;
 use std::path::Path;
 
 use skia_safe::{
-    BlurStyle, Color, EncodedImageFormat, Font, FontMgr, FontStyle, MaskFilter, Paint,
-    PathBuilder, RRect, Rect as SkRect, Surface, surfaces,
+    BlurStyle, Color, EncodedImageFormat, Font, FontMgr, FontStyle, MaskFilter, Paint, PathBuilder,
+    RRect, Rect as SkRect, Surface, surfaces,
 };
 
 use crate::{
@@ -216,7 +216,14 @@ fn maybe_draw_shadow_text(
     };
     let paint = shadow_paint(item, shadow);
     let font = resolve_font(primitive);
-    draw_text_lines(canvas, primitive, &font, &paint, shadow.offset_x, shadow.offset_y);
+    draw_text_lines(
+        canvas,
+        primitive,
+        &font,
+        &paint,
+        shadow.offset_x,
+        shadow.offset_y,
+    );
 }
 
 fn resolve_font(primitive: &TextPrimitive) -> Font {
@@ -246,11 +253,7 @@ fn draw_text_lines(
     offset_x: f64,
     offset_y: f64,
 ) {
-    let lines = wrap_text_lines(
-        &primitive.text,
-        primitive.font_size,
-        primitive.max_width,
-    );
+    let lines = wrap_text_lines(&primitive.text, primitive.font_size, primitive.max_width);
     let line_step = (primitive.font_size * primitive.line_height) as f32;
     let max_width = primitive.max_width.unwrap_or(f64::INFINITY) as f32;
 
