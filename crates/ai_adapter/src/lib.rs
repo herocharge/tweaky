@@ -725,6 +725,7 @@ fn try_staged_template_generation(
         };
 
         let mut working_scene = scaffold.clone();
+        let mut completed_stages = Vec::new();
         apply_plan_canvas_to_scene(&mut working_scene, &plan);
         let stages = derive_stages_from_plan(&plan);
         let mut stage_failed = false;
@@ -732,6 +733,7 @@ fn try_staged_template_generation(
         for stage in &stages {
             let mut repair_feedback = None;
             let mut stage_complete = false;
+            let mut best_effort_candidate = None;
 
             for _ in 0..2 {
                 match request_stage_nodes(
@@ -749,6 +751,7 @@ fn try_staged_template_generation(
                             Ok(()) => {
                                 let mut candidate_scene = working_scene.clone();
                                 merge_stage_children(&mut candidate_scene, stage_response.children);
+                                best_effort_candidate = Some(candidate_scene.clone());
                                 match critique_stage_and_maybe_request_retry(
                                     config,
                                     api_key,
@@ -763,6 +766,7 @@ fn try_staged_template_generation(
                                     }
                                     Ok(None) => {
                                         working_scene = candidate_scene;
+                                        completed_stages.push(stage.clone());
                                         stage_complete = true;
                                         break;
                                     }
@@ -775,7 +779,14 @@ fn try_staged_template_generation(
                                         repair_feedback = Some(build_repair_feedback(&error));
                                     }
                                     Err(error) if is_retryable_gemini_error(&error) => {
-                                        stage_failed = true;
+                                        if let Some(candidate_scene) = best_effort_candidate.take()
+                                        {
+                                            working_scene = candidate_scene;
+                                            completed_stages.push(stage.clone());
+                                            stage_complete = true;
+                                        } else {
+                                            stage_failed = true;
+                                        }
                                         break;
                                     }
                                     Err(error) => return Err(error),
@@ -812,6 +823,12 @@ fn try_staged_template_generation(
                 }
             }
 
+            if !stage_complete && let Some(candidate_scene) = best_effort_candidate.take() {
+                working_scene = candidate_scene;
+                completed_stages.push(stage.clone());
+                stage_complete = true;
+            }
+
             if !stage_complete {
                 stage_failed = true;
                 break;
@@ -819,17 +836,17 @@ fn try_staged_template_generation(
         }
 
         if stage_failed {
+            if let Some(generated) =
+                finalize_staged_scene(prompt, &working_scene, &completed_stages, true)?
+            {
+                return Ok(Some(generated));
+            }
             continue;
         }
 
-        let response = AiSceneResponse {
-            mode: ResponseMode::FullDocument,
-            summary: format!("Staged poster scene for prompt: {prompt}"),
-            document: Some(working_scene.clone()),
-            notes: vec!["Generated via staged subtree pipeline".to_string()],
-        };
-
-        if let Ok(generated) = validate_generated_response(response) {
+        if let Some(generated) =
+            finalize_staged_scene(prompt, &working_scene, &completed_stages, false)?
+        {
             return Ok(Some(generated));
         }
     }
@@ -854,8 +871,64 @@ fn build_poster_scaffold_scene(template_scene: &str) -> Result<SceneFile, AiAdap
     Ok(scene)
 }
 
+fn finalize_staged_scene(
+    prompt: &str,
+    scene: &SceneFile,
+    completed_stages: &[StageSpec],
+    partial: bool,
+) -> Result<Option<GeneratedScene>, AiAdapterError> {
+    if !can_finalize_staged_scene(completed_stages) {
+        return Ok(None);
+    }
+
+    let mut notes = vec!["Generated via staged subtree pipeline".to_string()];
+    notes.push(format!(
+        "Completed stages: {}",
+        completed_stages
+            .iter()
+            .map(|stage| stage.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+
+    if partial {
+        notes.push("Returned a partial but editable scene after a later stage failed.".to_string());
+    }
+
+    let response = AiSceneResponse {
+        mode: ResponseMode::FullDocument,
+        summary: if partial {
+            format!("Partially completed staged poster scene for prompt: {prompt}")
+        } else {
+            format!("Staged poster scene for prompt: {prompt}")
+        },
+        document: Some(scene.clone()),
+        notes,
+    };
+
+    match validate_generated_response(response) {
+        Ok(generated) => Ok(Some(generated)),
+        Err(AiAdapterError::InvalidDocument(_)) if partial => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn can_finalize_staged_scene(completed_stages: &[StageSpec]) -> bool {
+    completed_stages
+        .iter()
+        .any(|stage| !matches!(stage.kind, StageKind::Support))
+}
+
+#[derive(Debug, Clone)]
+enum StageKind {
+    Support,
+    Subject,
+    Text,
+}
+
 #[derive(Debug, Clone)]
 struct StageSpec {
+    kind: StageKind,
     id: String,
     purpose: String,
     target_node_ids: Vec<String>,
@@ -895,6 +968,7 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
     let mut stages = Vec::new();
     if !support_nodes.is_empty() {
         stages.push(stage_from_nodes(
+            StageKind::Support,
             "support",
             "Add support, background, or grounding nodes that establish the scene.",
             &support_nodes,
@@ -904,6 +978,7 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
 
     for node in subject_nodes {
         stages.push(stage_from_nodes(
+            StageKind::Subject,
             &slugify(&node.id),
             &format!(
                 "Add the editable scene nodes for '{}'. {}",
@@ -916,6 +991,7 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
 
     if !text_nodes.is_empty() {
         stages.push(stage_from_nodes(
+            StageKind::Text,
             "text",
             "Add the text or caption nodes that complete the composition.",
             &text_nodes,
@@ -925,6 +1001,7 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
 
     if stages.is_empty() {
         stages.push(StageSpec {
+            kind: StageKind::Subject,
             id: "primary_subject".to_string(),
             purpose: format!(
                 "Add the main editable subject nodes needed to realize this planned scene: {}",
@@ -943,12 +1020,14 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
 }
 
 fn stage_from_nodes(
+    kind: StageKind,
     id: &str,
     purpose: &str,
     nodes: &[ScenePlanNode],
     composition_notes: &[String],
 ) -> StageSpec {
     StageSpec {
+        kind,
         id: id.to_string(),
         purpose: purpose.to_string(),
         target_node_ids: nodes.iter().map(|node| node.id.clone()).collect(),
@@ -1290,7 +1369,7 @@ fn critique_stage_and_maybe_request_retry(
 }
 
 fn should_visually_critique_stage(stage: &StageSpec) -> bool {
-    stage.id != "support"
+    !matches!(stage.kind, StageKind::Support)
 }
 
 fn build_stage_critique_feedback(stage: &StageSpec, critique: &SceneCritique) -> String {
@@ -2477,9 +2556,9 @@ mod tests {
     use super::{
         AiAdapterError, BASIC_POSTER, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL,
         GeneratedScene, ProviderConfig, ProviderKind, ResponseMode, ScenePlan, ScenePlanCanvas,
-        ScenePlanNode, SceneTemplateKind, gemini_endpoint, gemini_model_attempts,
-        gemini_plan_to_scene_prompt, gemini_user_prompt, generate_scene_from_prompt_with_config,
-        parse_ai_scene_response, scene_plan_schema,
+        ScenePlanNode, SceneTemplateKind, StageKind, StageSpec, can_finalize_staged_scene,
+        gemini_endpoint, gemini_model_attempts, gemini_plan_to_scene_prompt, gemini_user_prompt,
+        generate_scene_from_prompt_with_config, parse_ai_scene_response, scene_plan_schema,
     };
     use std::env;
     use std::sync::{Mutex, OnceLock};
@@ -2611,6 +2690,30 @@ mod tests {
             env::remove_var(crate::DEFAULT_PROVIDER_ENV_VAR);
             env::remove_var(crate::DISABLE_FALLBACK_ENV_VAR);
         }
+    }
+
+    #[test]
+    fn partial_staged_scene_requires_non_support_progress() {
+        let support_only = vec![StageSpec {
+            kind: StageKind::Support,
+            id: "support".to_string(),
+            purpose: "support".to_string(),
+            target_node_ids: vec!["ground".to_string()],
+            composition_hints: vec![],
+        }];
+        assert!(!can_finalize_staged_scene(&support_only));
+
+        let with_subject = vec![
+            support_only[0].clone(),
+            StageSpec {
+                kind: StageKind::Subject,
+                id: "pelican".to_string(),
+                purpose: "subject".to_string(),
+                target_node_ids: vec!["pelican".to_string()],
+                composition_hints: vec![],
+            },
+        ];
+        assert!(can_finalize_staged_scene(&with_subject));
     }
 
     #[test]
