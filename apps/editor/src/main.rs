@@ -143,5 +143,5 @@ fn build_provider_config(options: &CliOptions) -> Result<ProviderConfig, String>
         config = config.with_base_url(base_url.clone());
     }
 
-    Ok(config)
+    Ok(config.apply_env_toggles())
 }

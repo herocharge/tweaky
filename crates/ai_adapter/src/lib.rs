@@ -24,6 +24,7 @@ pub const DEFAULT_MODEL_ENV_VAR: &str = "TWEAKY_AI_MODEL";
 pub const DEFAULT_API_KEY_ENV_VAR: &str = "TWEAKY_AI_API_KEY_ENV";
 pub const DEFAULT_BASE_URL_ENV_VAR: &str = "TWEAKY_AI_BASE_URL";
 pub const DEFAULT_FALLBACK_MODELS_ENV_VAR: &str = "TWEAKY_AI_FALLBACK_MODELS";
+pub const DISABLE_FALLBACK_ENV_VAR: &str = "TWEAKY_AI_DISABLE_FALLBACK";
 pub const DEFAULT_TRACE_DIR_ENV_VAR: &str = "TWEAKY_AI_TRACE_DIR";
 
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -210,7 +211,7 @@ impl ProviderConfig {
             }
         }
 
-        Ok(config)
+        Ok(config.apply_env_toggles())
     }
 
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
@@ -230,6 +231,13 @@ impl ProviderConfig {
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = Some(base_url.into());
+        self
+    }
+
+    pub fn apply_env_toggles(mut self) -> Self {
+        if env_var_truthy(DISABLE_FALLBACK_ENV_VAR) {
+            self.fallback_models.clear();
+        }
         self
     }
 
@@ -739,9 +747,39 @@ fn try_staged_template_generation(
                     Ok(stage_response) => {
                         match validate_stage_children(&working_scene, &stage_response.children) {
                             Ok(()) => {
-                                merge_stage_children(&mut working_scene, stage_response.children);
-                                stage_complete = true;
-                                break;
+                                let mut candidate_scene = working_scene.clone();
+                                merge_stage_children(&mut candidate_scene, stage_response.children);
+                                match critique_stage_and_maybe_request_retry(
+                                    config,
+                                    api_key,
+                                    prompt,
+                                    &candidate_scene,
+                                    &plan,
+                                    stage,
+                                    &model,
+                                ) {
+                                    Ok(Some(feedback)) => {
+                                        repair_feedback = Some(feedback);
+                                    }
+                                    Ok(None) => {
+                                        working_scene = candidate_scene;
+                                        stage_complete = true;
+                                        break;
+                                    }
+                                    Err(error)
+                                        if should_retry_same_model_with_feedback(
+                                            &error,
+                                            &repair_feedback,
+                                        ) =>
+                                    {
+                                        repair_feedback = Some(build_repair_feedback(&error));
+                                    }
+                                    Err(error) if is_retryable_gemini_error(&error) => {
+                                        stage_failed = true;
+                                        break;
+                                    }
+                                    Err(error) => return Err(error),
+                                }
                             }
                             Err(error)
                                 if should_retry_same_model_with_feedback(
@@ -1219,6 +1257,58 @@ fn critique_and_maybe_revise_scene(
     Ok(Some(revised_generated))
 }
 
+fn critique_stage_and_maybe_request_retry(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+    scene: &SceneFile,
+    plan: &ScenePlan,
+    stage: &StageSpec,
+    model: &str,
+) -> Result<Option<String>, AiAdapterError> {
+    if !should_visually_critique_stage(stage) {
+        return Ok(None);
+    }
+
+    let rendered_png = render_scene_png(scene)?;
+    let critique = request_gemini_stage_critique(
+        config,
+        api_key,
+        prompt,
+        scene,
+        plan,
+        stage,
+        &rendered_png,
+        model,
+    )?;
+
+    if critique.satisfactory || critique.revision_goals.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(build_stage_critique_feedback(stage, &critique)))
+}
+
+fn should_visually_critique_stage(stage: &StageSpec) -> bool {
+    stage.id != "support"
+}
+
+fn build_stage_critique_feedback(stage: &StageSpec, critique: &SceneCritique) -> String {
+    format!(
+        concat!(
+            "The rendered image shows problems with stage '{}'. ",
+            "Stage summary: {} ",
+            "Issues: {} ",
+            "Revision goals: {} ",
+            "Regenerate only this stage's nodes and keep the rest of the scene intact."
+        ),
+        stage.id,
+        critique.summary,
+        critique.issues.join(" | "),
+        critique.revision_goals.join(" | ")
+    )
+}
+
 fn render_scene_png(scene: &SceneFile) -> Result<Vec<u8>, AiAdapterError> {
     let plan = renderer::build_render_plan(scene);
     renderer::skia_backend::render_plan_to_png(
@@ -1332,6 +1422,48 @@ fn request_gemini_scene_critique(
     };
 
     let json_text = send_gemini_request(config, api_key, model, "critique", endpoint, &request)?;
+    serde_json::from_str::<SceneCritique>(&json_text)
+        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
+}
+
+fn request_gemini_stage_critique(
+    config: &ProviderConfig,
+    api_key: &str,
+    prompt: &str,
+    scene: &SceneFile,
+    plan: &ScenePlan,
+    stage: &StageSpec,
+    rendered_png: &[u8],
+    model: &str,
+) -> Result<SceneCritique, AiAdapterError> {
+    let endpoint = gemini_endpoint(config, model);
+    let request = GeminiGenerateContentRequest {
+        system_instruction: GeminiContent {
+            parts: vec![GeminiPart::text(gemini_critique_system_instruction(model))],
+        },
+        contents: vec![GeminiContent {
+            parts: vec![
+                GeminiPart::text(gemini_stage_critique_user_prompt(
+                    prompt, scene, plan, stage,
+                )),
+                GeminiPart::inline_png(rendered_png),
+            ],
+        }],
+        generation_config: GeminiGenerationConfig {
+            response_mime_type: "application/json".to_string(),
+            response_json_schema: scene_critique_schema(),
+            temperature: Some(0.2),
+        },
+    };
+
+    let json_text = send_gemini_request(
+        config,
+        api_key,
+        model,
+        &format!("stage_critique_{}", stage.id),
+        endpoint,
+        &request,
+    )?;
     serde_json::from_str::<SceneCritique>(&json_text)
         .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
 }
@@ -1964,6 +2096,36 @@ fn gemini_critique_user_prompt(prompt: &str, scene: &SceneFile) -> String {
     )
 }
 
+fn gemini_stage_critique_user_prompt(
+    prompt: &str,
+    scene: &SceneFile,
+    plan: &ScenePlan,
+    stage: &StageSpec,
+) -> String {
+    format!(
+        concat!(
+            "User prompt:\n{}\n\n",
+            "Overall plan summary:\n{}\n\n",
+            "Current stage id: {}\n",
+            "Stage purpose: {}\n",
+            "Target node ids: {}\n",
+            "Relevant composition hints:\n{}\n\n",
+            "Current scene JSON:\n{}\n\n",
+            "Look at the rendered image and judge whether this stage's contribution is visually successful.\n",
+            "Focus on the newest stage output, but consider how it fits into the whole scene.\n",
+            "If this stage is acceptable, mark satisfactory true.\n",
+            "If not, give concise issues and revision goals for regenerating only this stage."
+        ),
+        prompt,
+        plan.summary,
+        stage.id,
+        stage.purpose,
+        stage.target_node_ids.join(", "),
+        stage.composition_hints.join("\n"),
+        serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string())
+    )
+}
+
 fn gemini_revision_user_prompt(
     prompt: &str,
     scene: &SceneFile,
@@ -2146,7 +2308,18 @@ fn parse_fallback_models(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn env_var_truthy(name: &str) -> bool {
+    matches!(
+        env::var(name).ok().as_deref().map(str::trim),
+        Some("1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
+    )
+}
+
 fn gemini_model_attempts(config: &ProviderConfig) -> Vec<String> {
+    if env_var_truthy(DISABLE_FALLBACK_ENV_VAR) {
+        return vec![config.model.clone()];
+    }
+
     let mut models = vec![config.model.clone()];
     for fallback in &config.fallback_models {
         if !models.iter().any(|existing| existing == fallback) {
@@ -2309,6 +2482,16 @@ mod tests {
         parse_ai_scene_response, scene_plan_schema,
     };
     use std::env;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn lock_env_test() -> std::sync::MutexGuard<'static, ()> {
+        ENV_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env test lock should not be poisoned")
+    }
 
     fn assert_pelican_scene(generated: GeneratedScene) {
         assert_eq!(generated.response.mode, ResponseMode::FullDocument);
@@ -2383,6 +2566,12 @@ mod tests {
 
     #[test]
     fn gemini_attempts_primary_then_fallback() {
+        let _guard = lock_env_test();
+        let previous_disable_fallback = env::var(crate::DISABLE_FALLBACK_ENV_VAR).ok();
+        unsafe {
+            env::remove_var(crate::DISABLE_FALLBACK_ENV_VAR);
+        }
+
         let config = ProviderConfig::for_provider(ProviderKind::Gemini)
             .with_model("gemini-2.5-flash".to_string())
             .with_fallback_models(vec![
@@ -2396,6 +2585,32 @@ mod tests {
                 "gemini-2.5-flash-lite".to_string()
             ]
         );
+
+        match previous_disable_fallback {
+            Some(value) => unsafe {
+                env::set_var(crate::DISABLE_FALLBACK_ENV_VAR, value);
+            },
+            None => unsafe {
+                env::remove_var(crate::DISABLE_FALLBACK_ENV_VAR);
+            },
+        }
+    }
+
+    #[test]
+    fn disables_fallback_models_via_env() {
+        let _guard = lock_env_test();
+        unsafe {
+            env::set_var(crate::DEFAULT_PROVIDER_ENV_VAR, "gemini");
+            env::set_var(crate::DISABLE_FALLBACK_ENV_VAR, "1");
+        }
+
+        let config = ProviderConfig::from_env().expect("env config should load");
+        assert!(config.fallback_models.is_empty());
+
+        unsafe {
+            env::remove_var(crate::DEFAULT_PROVIDER_ENV_VAR);
+            env::remove_var(crate::DISABLE_FALLBACK_ENV_VAR);
+        }
     }
 
     #[test]
