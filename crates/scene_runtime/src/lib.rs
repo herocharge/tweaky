@@ -51,6 +51,87 @@ impl Rect {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WorldTransform {
+    pub m11: f64,
+    pub m12: f64,
+    pub m21: f64,
+    pub m22: f64,
+    pub tx: f64,
+    pub ty: f64,
+    pub opacity: f64,
+}
+
+impl WorldTransform {
+    pub fn identity() -> Self {
+        Self {
+            m11: 1.0,
+            m12: 0.0,
+            m21: 0.0,
+            m22: 1.0,
+            tx: 0.0,
+            ty: 0.0,
+            opacity: 1.0,
+        }
+    }
+
+    pub fn from_local(transform: &Transform) -> Self {
+        let radians = transform.rotation.to_radians();
+        let cos = radians.cos();
+        let sin = radians.sin();
+
+        Self {
+            m11: transform.scale_x * cos,
+            m12: -transform.scale_y * sin,
+            m21: transform.scale_x * sin,
+            m22: transform.scale_y * cos,
+            tx: transform.x,
+            ty: transform.y,
+            opacity: transform.opacity,
+        }
+    }
+
+    pub fn compose(parent: &Self, local: &Transform) -> Self {
+        let local = Self::from_local(local);
+
+        Self {
+            m11: parent.m11 * local.m11 + parent.m12 * local.m21,
+            m12: parent.m11 * local.m12 + parent.m12 * local.m22,
+            m21: parent.m21 * local.m11 + parent.m22 * local.m21,
+            m22: parent.m21 * local.m12 + parent.m22 * local.m22,
+            tx: parent.tx + parent.m11 * local.tx + parent.m12 * local.ty,
+            ty: parent.ty + parent.m21 * local.tx + parent.m22 * local.ty,
+            opacity: parent.opacity * local.opacity,
+        }
+    }
+
+    pub fn apply_point(&self, x: f64, y: f64) -> Point {
+        Point {
+            x: self.tx + self.m11 * x + self.m12 * y,
+            y: self.ty + self.m21 * x + self.m22 * y,
+        }
+    }
+
+    pub fn apply_vector(&self, x: f64, y: f64) -> Point {
+        Point {
+            x: self.m11 * x + self.m12 * y,
+            y: self.m21 * x + self.m22 * y,
+        }
+    }
+
+    pub fn scale_x(&self) -> f64 {
+        self.m11.hypot(self.m21)
+    }
+
+    pub fn scale_y(&self) -> f64 {
+        self.m12.hypot(self.m22)
+    }
+
+    pub fn average_scale(&self) -> f64 {
+        (self.scale_x() + self.scale_y()) * 0.5
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentDefinition {
     pub display_name: &'static str,
@@ -266,13 +347,21 @@ impl RuntimeDocument {
     }
 
     pub fn node_bounds(&self, node_id: &str) -> Option<Rect> {
-        let node = self.find_node(node_id)?;
-        bounds_for_node(node)
+        find_node_bounds_in_context(
+            &self.scene.document.root,
+            node_id,
+            &WorldTransform::identity(),
+        )
     }
 
     pub fn hit_test(&self, point: Point) -> Vec<String> {
         let mut hits = Vec::new();
-        hit_test_node(&self.scene.document.root, point, &mut hits);
+        hit_test_node(
+            &self.scene.document.root,
+            point,
+            &WorldTransform::identity(),
+            &mut hits,
+        );
         hits
     }
 }
@@ -431,36 +520,40 @@ pub fn visit_depth_first<'a>(
 }
 
 pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
+    bounds_for_node_with_transform(node, &WorldTransform::identity())
+}
+
+pub fn bounds_for_node_with_transform(node: &SceneNode, parent: &WorldTransform) -> Option<Rect> {
+    let world = WorldTransform::compose(parent, &node.transform);
     let base = match node.node_type {
         scene_schema::NodeType::Group => {
-            let mut iter = node.children.iter().filter_map(bounds_for_node);
+            let mut iter = node
+                .children
+                .iter()
+                .filter_map(|child| bounds_for_node_with_transform(child, &world));
             let first = iter.next()?;
             Some(iter.fold(first, Rect::union))
         }
         scene_schema::NodeType::Rectangle => {
             let params = node.rectangle_params()?;
-            Some(transformed_rect(
-                &node.transform,
-                params.width,
-                params.height,
-            ))
+            Some(transformed_rect(&world, params.width, params.height))
         }
         scene_schema::NodeType::Ellipse => {
             let params = node.ellipse_params()?;
             Some(transformed_rect(
-                &node.transform,
+                &world,
                 params.radius_x * 2.0,
                 params.radius_y * 2.0,
             ))
         }
         scene_schema::NodeType::Path => {
             let params = node.path_params()?;
-            bounds_from_points(&node.transform, &params.points)
+            bounds_from_points(&world, &params.points)
         }
         scene_schema::NodeType::Text => {
             let params = node.text_params()?;
             Some(estimate_text_bounds(
-                &node.transform,
+                &world,
                 &params.text,
                 params.font_size,
                 params.line_height,
@@ -470,7 +563,7 @@ pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
         scene_schema::NodeType::ImageLayer => {
             let params = node.image_layer_params()?;
             Some(transformed_rect(
-                &node.transform,
+                &world,
                 params.display_width,
                 params.display_height,
             ))
@@ -478,10 +571,19 @@ pub fn bounds_for_node(node: &SceneNode) -> Option<Rect> {
         scene_schema::NodeType::Shadow | scene_schema::NodeType::Blur => None,
     }?;
 
-    Some(expand_bounds_for_effects(node, base))
+    Some(expand_bounds_for_effects(node, &world, base))
 }
 
 pub fn contains_point_for_node(node: &SceneNode, point: Point) -> bool {
+    contains_point_for_node_with_transform(node, point, &WorldTransform::identity())
+}
+
+pub fn contains_point_for_node_with_transform(
+    node: &SceneNode,
+    point: Point,
+    parent: &WorldTransform,
+) -> bool {
+    let world = WorldTransform::compose(parent, &node.transform);
     match node.node_type {
         scene_schema::NodeType::Path => {
             let Some(params) = node.path_params() else {
@@ -490,7 +592,7 @@ pub fn contains_point_for_node(node: &SceneNode, point: Point) -> bool {
             let transformed_points = params
                 .points
                 .iter()
-                .map(|path_point| transform_point(&node.transform, path_point.x, path_point.y))
+                .map(|path_point| transform_point(&world, path_point.x, path_point.y))
                 .collect::<Vec<_>>();
 
             if transformed_points.len() < 3 {
@@ -500,12 +602,12 @@ pub fn contains_point_for_node(node: &SceneNode, point: Point) -> bool {
             if params.closed {
                 point_in_polygon(point, &transformed_points)
             } else {
-                bounds_from_points(&node.transform, &params.points)
+                bounds_from_points(&world, &params.points)
                     .map(|bounds| bounds.contains(point))
                     .unwrap_or(false)
             }
         }
-        _ => bounds_for_node(node)
+        _ => bounds_for_node_with_transform(node, parent)
             .map(|bounds| bounds.contains(point))
             .unwrap_or(false),
     }
@@ -548,52 +650,35 @@ fn validate_insert_child(
     Ok(())
 }
 
-fn transformed_rect(transform: &Transform, width: f64, height: f64) -> Rect {
-    let scaled_width = width * transform.scale_x.abs();
-    let scaled_height = height * transform.scale_y.abs();
-
-    if transform.rotation == 0.0 {
-        return Rect::from_origin_size(
-            Point {
-                x: transform.x,
-                y: transform.y,
-            },
-            scaled_width,
-            scaled_height,
-        );
-    }
-
-    let radians = transform.rotation.to_radians();
-    let cos = radians.cos().abs();
-    let sin = radians.sin().abs();
-    let rotated_width = scaled_width * cos + scaled_height * sin;
-    let rotated_height = scaled_width * sin + scaled_height * cos;
-
-    Rect::from_origin_size(
-        Point {
-            x: transform.x,
-            y: transform.y,
-        },
-        rotated_width,
-        rotated_height,
-    )
+fn transformed_rect(transform: &WorldTransform, width: f64, height: f64) -> Rect {
+    let points = [
+        transform.apply_point(0.0, 0.0),
+        transform.apply_point(width, 0.0),
+        transform.apply_point(0.0, height),
+        transform.apply_point(width, height),
+    ];
+    rect_from_transformed_points(&points)
 }
 
-fn expand_bounds_for_effects(node: &SceneNode, bounds: Rect) -> Rect {
+fn expand_bounds_for_effects(node: &SceneNode, transform: &WorldTransform, bounds: Rect) -> Rect {
     let mut expanded = bounds;
 
     if let Some(blur_radius) = node.style_blur_radius() {
-        expanded = inflate_rect(expanded, blur_radius * 2.0);
+        expanded = inflate_rect(expanded, blur_radius * 2.0 * transform.average_scale());
     }
 
     if let Some(shadow) = node.style_shadow() {
+        let offset = transform.apply_vector(shadow.offset_x, shadow.offset_y);
         let shadow_bounds = Rect {
-            x: bounds.x + shadow.offset_x,
-            y: bounds.y + shadow.offset_y,
+            x: bounds.x + offset.x,
+            y: bounds.y + offset.y,
             width: bounds.width,
             height: bounds.height,
         };
-        expanded = expanded.union(inflate_rect(shadow_bounds, shadow.blur_radius * 2.0));
+        expanded = expanded.union(inflate_rect(
+            shadow_bounds,
+            shadow.blur_radius * 2.0 * transform.average_scale(),
+        ));
     }
 
     expanded
@@ -609,7 +694,7 @@ fn inflate_rect(rect: Rect, amount: f64) -> Rect {
 }
 
 fn estimate_text_bounds(
-    transform: &Transform,
+    transform: &WorldTransform,
     text: &str,
     font_size: f64,
     line_height: f64,
@@ -622,20 +707,12 @@ fn estimate_text_bounds(
         .max()
         .unwrap_or(0) as f64;
     let wrapped_width = max_line_chars * font_size * 0.6;
-    let width = max_width
+    let local_width = max_width
         .map(|limit| wrapped_width.min(limit))
-        .unwrap_or(wrapped_width)
-        * transform.scale_x.abs();
-    let height = lines.len() as f64 * font_size * line_height * transform.scale_y.abs();
+        .unwrap_or(wrapped_width);
+    let local_height = lines.len() as f64 * font_size * line_height;
 
-    Rect::from_origin_size(
-        Point {
-            x: transform.x,
-            y: transform.y,
-        },
-        width,
-        height,
-    )
+    transformed_rect(transform, local_width, local_height)
 }
 
 fn wrap_text_lines(text: &str, font_size: f64, max_width: Option<f64>) -> Vec<String> {
@@ -712,42 +789,41 @@ fn wrap_single_line(line: &str, max_chars: usize) -> Vec<String> {
     lines
 }
 
-fn bounds_from_points(transform: &Transform, points: &[PathPoint]) -> Option<Rect> {
-    let mut transformed = points
+fn bounds_from_points(transform: &WorldTransform, points: &[PathPoint]) -> Option<Rect> {
+    let transformed = points
         .iter()
-        .map(|point| transform_point(transform, point.x, point.y));
+        .map(|point| transform_point(transform, point.x, point.y))
+        .collect::<Vec<_>>();
+    if transformed.is_empty() {
+        None
+    } else {
+        Some(rect_from_transformed_points(&transformed))
+    }
+}
 
-    let first = transformed.next()?;
+fn transform_point(transform: &WorldTransform, x: f64, y: f64) -> Point {
+    transform.apply_point(x, y)
+}
+
+fn rect_from_transformed_points(points: &[Point]) -> Rect {
+    let first = points[0];
     let mut min_x = first.x;
     let mut min_y = first.y;
     let mut max_x = first.x;
     let mut max_y = first.y;
 
-    for point in transformed {
+    for point in points.iter().skip(1) {
         min_x = min_x.min(point.x);
         min_y = min_y.min(point.y);
         max_x = max_x.max(point.x);
         max_y = max_y.max(point.y);
     }
 
-    Some(Rect {
+    Rect {
         x: min_x,
         y: min_y,
         width: max_x - min_x,
         height: max_y - min_y,
-    })
-}
-
-fn transform_point(transform: &Transform, x: f64, y: f64) -> Point {
-    let scaled_x = x * transform.scale_x;
-    let scaled_y = y * transform.scale_y;
-    let radians = transform.rotation.to_radians();
-    let cos = radians.cos();
-    let sin = radians.sin();
-
-    Point {
-        x: transform.x + scaled_x * cos - scaled_y * sin,
-        y: transform.y + scaled_x * sin + scaled_y * cos,
     }
 }
 
@@ -755,18 +831,39 @@ fn set_object_string(object: &mut JsonObject, key: &str, value: String) {
     object.insert(key.to_string(), Value::String(value));
 }
 
-fn hit_test_node(node: &SceneNode, point: Point, hits: &mut Vec<String>) {
+fn hit_test_node(node: &SceneNode, point: Point, parent: &WorldTransform, hits: &mut Vec<String>) {
     if !node.visible {
         return;
     }
 
+    let world = WorldTransform::compose(parent, &node.transform);
+
     for child in node.children.iter().rev() {
-        hit_test_node(child, point, hits);
+        hit_test_node(child, point, &world, hits);
     }
 
-    if contains_point_for_node(node, point) {
+    if contains_point_for_node_with_transform(node, point, parent) {
         hits.push(node.id.clone());
     }
+}
+
+fn find_node_bounds_in_context(
+    node: &SceneNode,
+    target_id: &str,
+    parent: &WorldTransform,
+) -> Option<Rect> {
+    if node.id == target_id {
+        return bounds_for_node_with_transform(node, parent);
+    }
+
+    let world = WorldTransform::compose(parent, &node.transform);
+    for child in &node.children {
+        if let Some(bounds) = find_node_bounds_in_context(child, target_id, &world) {
+            return Some(bounds);
+        }
+    }
+
+    None
 }
 
 fn point_in_polygon(point: Point, polygon: &[Point]) -> bool {
@@ -867,6 +964,78 @@ mod tests {
         let node = runtime.find_node("headline").expect("node should exist");
         assert_eq!(node.transform.x, 240.0);
         assert_eq!(node.transform.opacity, 0.8);
+    }
+
+    #[test]
+    fn node_bounds_include_parent_group_transform() {
+        let scene = parse_scene_str(
+            r##"{
+  "version": "0.1",
+  "document": {
+    "id": "doc",
+    "name": "Nested",
+    "width": 800,
+    "height": 600,
+    "background": { "type": "solid", "color": "#ffffff" },
+    "resources": { "images": {}, "fonts": {}, "palettes": {} },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blend_mode": "normal",
+      "transform": { "x": 0, "y": 0, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+      "params": {},
+      "style": {},
+      "meta": {},
+      "children": [
+        {
+          "id": "pelican_group",
+          "type": "Group",
+          "name": "Pelican",
+          "visible": true,
+          "locked": false,
+          "blend_mode": "normal",
+          "transform": { "x": 100, "y": 80, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+          "params": {},
+          "style": {},
+          "meta": {},
+          "children": [
+            {
+              "id": "wing",
+              "type": "Rectangle",
+              "name": "Wing",
+              "visible": true,
+              "locked": false,
+              "blend_mode": "normal",
+              "transform": { "x": 20, "y": 30, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+              "params": { "width": 40, "height": 20 },
+              "style": { "fill": "#000000" },
+              "children": [],
+              "meta": {}
+            }
+          ]
+        }
+      ]
+    }
+  }
+}"##,
+        )
+        .expect("scene should parse");
+        let runtime =
+            RuntimeDocument::new(scene, ComponentRegistry::mvp()).expect("runtime should be valid");
+
+        let group_bounds = runtime
+            .node_bounds("pelican_group")
+            .expect("group bounds should exist");
+        let wing_bounds = runtime
+            .node_bounds("wing")
+            .expect("wing bounds should exist");
+
+        assert_eq!(wing_bounds.x, 120.0);
+        assert_eq!(wing_bounds.y, 110.0);
+        assert_eq!(group_bounds, wing_bounds);
     }
 
     #[test]

@@ -625,6 +625,19 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
       return;
     }
 
+    if (selectedNode_.type == "Group" && selectedNode_.hasBounds &&
+        mapSceneRect(selectedNode_.bounds, canvasRect).contains(event->position())) {
+      dragActive_ = true;
+      dragNodeId_ = selectedNode_.id;
+      dragStartWidgetPos_ = event->position();
+      dragCurrentWidgetPos_ = event->position();
+      dragStartSceneX_ = selectedNode_.positionX;
+      dragStartSceneY_ = selectedNode_.positionY;
+      update();
+      event->accept();
+      return;
+    }
+
     const auto nodeId = pickNodeAt(event->position());
     if (!nodeId.isEmpty()) {
       if (nodeId == selectedNode_.id) {

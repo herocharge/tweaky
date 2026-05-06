@@ -1,5 +1,5 @@
-use scene_runtime::bounds_for_node;
 pub use scene_runtime::{Point, Rect};
+use scene_runtime::{WorldTransform, bounds_for_node_with_transform};
 use scene_schema::{SceneFile, SceneNode};
 
 #[cfg(feature = "skia-safe-backend")]
@@ -97,7 +97,11 @@ pub trait RenderBackend {
 
 pub fn build_render_plan(scene: &SceneFile) -> RenderPlan {
     let mut items = Vec::new();
-    collect_render_items(&scene.document.root, &mut items);
+    collect_render_items(
+        &scene.document.root,
+        &WorldTransform::identity(),
+        &mut items,
+    );
 
     RenderPlan {
         background: RenderBackground {
@@ -118,38 +122,48 @@ pub fn render_with_backend<B: RenderBackend>(
     Ok(())
 }
 
-fn collect_render_items(node: &SceneNode, items: &mut Vec<RenderItem>) {
+fn collect_render_items(node: &SceneNode, parent: &WorldTransform, items: &mut Vec<RenderItem>) {
     if !node.visible {
         return;
     }
 
-    if let Some(item) = node_to_render_item(node) {
+    let world = WorldTransform::compose(parent, &node.transform);
+
+    if let Some(item) = node_to_render_item(node, parent, &world) {
         items.push(item);
     }
 
     for child in &node.children {
-        collect_render_items(child, items);
+        collect_render_items(child, &world, items);
     }
 }
 
-fn node_to_render_item(node: &SceneNode) -> Option<RenderItem> {
+fn node_to_render_item(
+    node: &SceneNode,
+    parent: &WorldTransform,
+    world: &WorldTransform,
+) -> Option<RenderItem> {
     let kind = match node.node_type {
         scene_schema::NodeType::Group
         | scene_schema::NodeType::Shadow
         | scene_schema::NodeType::Blur => return None,
-        scene_schema::NodeType::Rectangle => RenderKind::Rectangle(rectangle_primitive(node)?),
-        scene_schema::NodeType::Ellipse => RenderKind::Ellipse(ellipse_primitive(node)?),
-        scene_schema::NodeType::Path => RenderKind::Path(path_primitive(node)),
-        scene_schema::NodeType::Text => RenderKind::Text(text_primitive(node)?),
-        scene_schema::NodeType::ImageLayer => RenderKind::ImageLayer(image_layer_primitive(node)?),
+        scene_schema::NodeType::Rectangle => {
+            RenderKind::Rectangle(rectangle_primitive(node, parent)?)
+        }
+        scene_schema::NodeType::Ellipse => RenderKind::Ellipse(ellipse_primitive(node, parent)?),
+        scene_schema::NodeType::Path => RenderKind::Path(path_primitive(node, parent, world)),
+        scene_schema::NodeType::Text => RenderKind::Text(text_primitive(node, world)?),
+        scene_schema::NodeType::ImageLayer => {
+            RenderKind::ImageLayer(image_layer_primitive(node, parent)?)
+        }
     };
 
-    let bounds = bounds_for_node(node);
+    let bounds = bounds_for_node_with_transform(node, parent);
 
     Some(RenderItem {
         node_id: node.id.clone(),
         kind,
-        opacity: node.transform.opacity,
+        opacity: world.opacity,
         blend_mode: node.blend_mode,
         bounds,
         effects: RenderEffects {
@@ -164,9 +178,9 @@ fn node_to_render_item(node: &SceneNode) -> Option<RenderItem> {
     })
 }
 
-fn rectangle_primitive(node: &SceneNode) -> Option<RectanglePrimitive> {
+fn rectangle_primitive(node: &SceneNode, parent: &WorldTransform) -> Option<RectanglePrimitive> {
     let params = node.rectangle_params()?;
-    let bounds = bounds_for_node(node)?;
+    let bounds = bounds_for_node_with_transform(node, parent)?;
 
     Some(RectanglePrimitive {
         bounds,
@@ -175,8 +189,8 @@ fn rectangle_primitive(node: &SceneNode) -> Option<RectanglePrimitive> {
     })
 }
 
-fn ellipse_primitive(node: &SceneNode) -> Option<EllipsePrimitive> {
-    let bounds = bounds_for_node(node)?;
+fn ellipse_primitive(node: &SceneNode, parent: &WorldTransform) -> Option<EllipsePrimitive> {
+    let bounds = bounds_for_node_with_transform(node, parent)?;
 
     Some(EllipsePrimitive {
         bounds,
@@ -184,17 +198,21 @@ fn ellipse_primitive(node: &SceneNode) -> Option<EllipsePrimitive> {
     })
 }
 
-fn path_primitive(node: &SceneNode) -> PathPrimitive {
+fn path_primitive(
+    node: &SceneNode,
+    parent: &WorldTransform,
+    world: &WorldTransform,
+) -> PathPrimitive {
     let params = node.path_params();
     PathPrimitive {
-        bounds: bounds_for_node(node),
+        bounds: bounds_for_node_with_transform(node, parent),
         points: params
             .as_ref()
             .map(|params| {
                 params
                     .points
                     .iter()
-                    .map(|point| transform_path_point(node, point.x, point.y))
+                    .map(|point| transform_path_point(world, point.x, point.y))
                     .collect()
             })
             .unwrap_or_default(),
@@ -203,42 +221,32 @@ fn path_primitive(node: &SceneNode) -> PathPrimitive {
     }
 }
 
-fn transform_path_point(node: &SceneNode, x: f64, y: f64) -> Point {
-    let scaled_x = x * node.transform.scale_x;
-    let scaled_y = y * node.transform.scale_y;
-    let radians = node.transform.rotation.to_radians();
-    let cos = radians.cos();
-    let sin = radians.sin();
-
-    Point {
-        x: node.transform.x + scaled_x * cos - scaled_y * sin,
-        y: node.transform.y + scaled_x * sin + scaled_y * cos,
-    }
+fn transform_path_point(world: &WorldTransform, x: f64, y: f64) -> Point {
+    world.apply_point(x, y)
 }
 
-fn text_primitive(node: &SceneNode) -> Option<TextPrimitive> {
+fn text_primitive(node: &SceneNode, world: &WorldTransform) -> Option<TextPrimitive> {
     let params = node.text_params()?;
+    let scale_x = world.scale_x().max(0.0001);
+    let scale_y = world.scale_y().max(0.0001);
 
     Some(TextPrimitive {
-        origin: Point {
-            x: node.transform.x,
-            y: node.transform.y,
-        },
+        origin: world.apply_point(0.0, 0.0),
         text: params.text,
-        font_size: params.font_size,
+        font_size: params.font_size * scale_y,
         font_family: params.font_family,
         line_height: params.line_height,
-        max_width: params.max_width,
+        max_width: params.max_width.map(|width| width * scale_x),
         align: params.align,
         fill: node.style_fill(),
     })
 }
 
-fn image_layer_primitive(node: &SceneNode) -> Option<ImageLayerPrimitive> {
+fn image_layer_primitive(node: &SceneNode, parent: &WorldTransform) -> Option<ImageLayerPrimitive> {
     let params = node.image_layer_params()?;
 
     Some(ImageLayerPrimitive {
-        bounds: bounds_for_node(node)?,
+        bounds: bounds_for_node_with_transform(node, parent)?,
         image_ref: Some(params.image_ref),
     })
 }
@@ -316,6 +324,72 @@ mod tests {
         let item_bounds = plan.items[0].bounds.expect("item bounds should exist");
 
         assert_eq!(item_bounds, runtime_bounds);
+    }
+
+    #[test]
+    fn render_plan_applies_parent_group_transform() {
+        let scene = parse_scene_str(
+            r##"{
+  "version": "0.1",
+  "document": {
+    "id": "doc",
+    "name": "Nested",
+    "width": 800,
+    "height": 600,
+    "background": { "type": "solid", "color": "#ffffff" },
+    "resources": { "images": {}, "fonts": {}, "palettes": {} },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blend_mode": "normal",
+      "transform": { "x": 0, "y": 0, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+      "params": {},
+      "style": {},
+      "meta": {},
+      "children": [
+        {
+          "id": "pelican_group",
+          "type": "Group",
+          "name": "Pelican",
+          "visible": true,
+          "locked": false,
+          "blend_mode": "normal",
+          "transform": { "x": 100, "y": 80, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+          "params": {},
+          "style": {},
+          "meta": {},
+          "children": [
+            {
+              "id": "wing",
+              "type": "Rectangle",
+              "name": "Wing",
+              "visible": true,
+              "locked": false,
+              "blend_mode": "normal",
+              "transform": { "x": 20, "y": 30, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1 },
+              "params": { "width": 40, "height": 20 },
+              "style": { "fill": "#000000" },
+              "children": [],
+              "meta": {}
+            }
+          ]
+        }
+      ]
+    }
+  }
+}"##,
+        )
+        .expect("scene should parse");
+
+        let plan = build_render_plan(&scene);
+        let item = plan.items.first().expect("render item should exist");
+        let item_bounds = item.bounds.expect("item bounds should exist");
+
+        assert_eq!(item_bounds.x, 120.0);
+        assert_eq!(item_bounds.y, 110.0);
     }
 
     #[derive(Default)]
