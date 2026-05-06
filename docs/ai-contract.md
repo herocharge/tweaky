@@ -78,7 +78,7 @@ Use this for:
 
 The model returns a full `.vsd.json` document.
 
-### Mode 2: Patch
+### Mode 2: Patch / Operations
 
 Use this for:
 
@@ -86,7 +86,7 @@ Use this for:
 - localized edits
 - conversational follow-ups like "move the bird higher"
 
-The model returns a structured patch format that maps to scene edits.
+The model returns a structured patch or operation format that maps to scene edits.
 
 For MVP, full-document output is the easiest place to start. Patch mode should follow once the generation path is stable.
 
@@ -118,6 +118,38 @@ The AI should follow a three-tier generation strategy:
 
 This keeps the AI aligned with the editor instead of fighting it.
 
+## Tool-Call Direction
+
+The next implementation direction should be operation-first AI.
+
+Instead of asking the model to return arbitrary child-node blobs, give it a typed tool or schema layer with operations such as:
+
+- `create_group`
+- `create_rectangle`
+- `create_ellipse`
+- `create_path`
+- `create_text`
+- `create_image_layer`
+- `set_transform`
+- `replace_params`
+- `replace_style`
+- `delete_node`
+
+This moves structural authority from the model into the runtime:
+
+- the model decides intent
+- the runtime owns validation and application
+- retries become smaller and cheaper
+- scene diffs become much easier to reason about
+
+This is especially important for grouped-subject workflows such as:
+
+1. create `pelican_group`
+2. add `pelican_body`, `pelican_beak`, `pelican_wing`
+3. critique `pelican_group`
+4. combine with `bicycle_group`
+5. critique the larger grouped composition
+
 ## First Contract Shape
 
 The AI adapter should ask the model for a JSON envelope, not raw prose.
@@ -136,7 +168,7 @@ Suggested top-level response:
 }
 ```
 
-Suggested patch shape for later:
+Suggested operation-first shape:
 
 ```json
 {
@@ -145,13 +177,13 @@ Suggested patch shape for later:
   "operations": [
     {
       "op": "set_transform",
-      "nodeId": "title",
+      "node_id": "title",
       "x": 220,
       "y": 100
     },
     {
       "op": "replace_params",
-      "nodeId": "front_wheel",
+      "node_id": "front_wheel",
       "params": {
         "radiusX": 96,
         "radiusY": 96
@@ -161,6 +193,8 @@ Suggested patch shape for later:
   "notes": []
 }
 ```
+
+This should become the preferred long-term contract over asking the model to emit large scene subtrees directly.
 
 ## Validation And Repair
 
@@ -251,6 +285,27 @@ This is useful because it tests:
 
 The benchmark is not about photorealism.
 It is about editable scene quality.
+
+## Future Hybrid Style Nodes
+
+For high-style outputs such as anime-like art, `tweaky` should not rely on pure vector decomposition alone.
+
+The likely long-term model is hybrid:
+
+- structured scene and tool-call ops for composition, grouping, props, text, and layout
+- raster-backed style nodes for hard-to-parameterize rendering detail
+
+The current MVP node for that is `ImageLayer`.
+
+A likely future refinement is a first-class stylized raster node such as `PaintPatch`, which would extend the `ImageLayer` idea with better metadata for:
+
+- intended scale behavior
+- masking or cutout boundaries
+- style tags
+- provenance from AI generation
+- optional replace or regenerate hooks
+
+That would let `tweaky` support more expressive art styles without giving up document editability.
 
 ## Benchmark Evaluation
 

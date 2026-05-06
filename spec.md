@@ -419,9 +419,22 @@ The AI layer should target document structure, not pixels.
 - Explain the generated hierarchy
 - Suggest useful tweak controls
 
+The next concrete AI contract should shift from raw subtree emission toward typed scene operations such as:
+
+- `create_group`
+- `create_rectangle`
+- `create_ellipse`
+- `create_path`
+- `create_text`
+- `create_image_layer`
+- `set_transform`
+- `replace_params`
+- `replace_style`
+- `delete_node`
+
 ### Generation strategy
 
-The AI adapter should emit validated JSON matching the scene schema.
+The AI adapter should increasingly emit validated operation batches or schema-constrained JSON matching the scene model, rather than large free-form scene blobs.
 
 Recommended flow:
 
@@ -430,6 +443,8 @@ Recommended flow:
 3. Validate document
 4. Repair common issues automatically
 5. Load into editor
+
+Longer term, the runtime should be the authority that applies those operations and validates the result.
 
 ### Repair examples
 

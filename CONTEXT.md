@@ -120,6 +120,7 @@ Currently implemented:
 - the Gemini path now uses a two-pass plan-then-scene flow before falling back to simpler generation behavior
 - the Gemini path can now render a generated scene to PNG and send that image back for one critique/revision round
 - the Gemini path now chooses a repo-native template family (`poster`, `shapes`, or `hybrid`) based on the prompt and conditions planning/generation on that scaffold
+- `ai_adapter` now also contains a typed scene-operation contract as the foundation for future Gemini tool-call style scene construction
 - `scene_schema` typed parameter accessors layered over the generic JSON document
 - `editor` binary scaffold
 - JSON Schema for document version `0.1`
@@ -133,6 +134,7 @@ Expected next implementation step:
 - Add save/save-as behavior through the Rust app layer
 - Preserve the Rust-owned view-model boundary as the source of truth for UI data
 - Keep renderer/runtime boundaries stable while the desktop shell becomes interactive
+- Move the AI pipeline from raw subtree emission toward operation-first scene construction and execution
 
 ## Intended Repo Shape
 

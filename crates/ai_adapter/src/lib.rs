@@ -112,6 +112,123 @@ pub struct StageNodeResponse {
     pub notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SceneOperationBatch {
+    pub summary: String,
+    pub operations: Vec<SceneOperation>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum SceneOperation {
+    CreateGroup {
+        node_id: String,
+        parent_id: String,
+        name: String,
+        x: f64,
+        y: f64,
+    },
+    CreateRectangle {
+        node_id: String,
+        parent_id: String,
+        name: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        #[serde(default)]
+        corner_radius: Option<f64>,
+        #[serde(default)]
+        fill: Option<String>,
+    },
+    CreateEllipse {
+        node_id: String,
+        parent_id: String,
+        name: String,
+        x: f64,
+        y: f64,
+        radius_x: f64,
+        radius_y: f64,
+        #[serde(default)]
+        fill: Option<String>,
+    },
+    CreatePath {
+        node_id: String,
+        parent_id: String,
+        name: String,
+        x: f64,
+        y: f64,
+        points: Vec<SceneOpPoint>,
+        #[serde(default)]
+        closed: Option<bool>,
+        #[serde(default)]
+        fill: Option<String>,
+    },
+    CreateText {
+        node_id: String,
+        parent_id: String,
+        name: String,
+        x: f64,
+        y: f64,
+        text: String,
+        font_size: f64,
+        #[serde(default)]
+        font_family: Option<String>,
+        #[serde(default)]
+        line_height: Option<f64>,
+        #[serde(default)]
+        max_width: Option<f64>,
+        #[serde(default)]
+        align: Option<String>,
+        #[serde(default)]
+        fill: Option<String>,
+    },
+    CreateImageLayer {
+        node_id: String,
+        parent_id: String,
+        name: String,
+        x: f64,
+        y: f64,
+        image_ref: String,
+        display_width: f64,
+        display_height: f64,
+    },
+    SetTransform {
+        node_id: String,
+        #[serde(default)]
+        x: Option<f64>,
+        #[serde(default)]
+        y: Option<f64>,
+        #[serde(default)]
+        scale_x: Option<f64>,
+        #[serde(default)]
+        scale_y: Option<f64>,
+        #[serde(default)]
+        rotation: Option<f64>,
+        #[serde(default)]
+        opacity: Option<f64>,
+    },
+    ReplaceParams {
+        node_id: String,
+        params: JsonObject,
+    },
+    ReplaceStyle {
+        node_id: String,
+        style: JsonObject,
+    },
+    DeleteNode {
+        node_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SceneOpPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SceneTemplateKind {
     Poster,
@@ -935,22 +1052,22 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
     );
 
     if stages.is_empty() {
-            stages.push(StageSpec {
-                kind: StageKind::Subject,
-                id: "primary_subject".to_string(),
-                slot_id: "root".to_string(),
-                purpose: format!(
+        stages.push(StageSpec {
+            kind: StageKind::Subject,
+            id: "primary_subject".to_string(),
+            slot_id: "root".to_string(),
+            purpose: format!(
                 "Add the main editable subject nodes needed to realize this planned scene: {}",
                 plan.summary
             ),
-                target_node_ids: plan
-                    .major_nodes
-                    .iter()
-                    .map(|node| node.id.clone())
-                    .collect(),
-                composition_hints: plan.composition_notes.iter().take(3).cloned().collect(),
-                focus_group_id: None,
-            });
+            target_node_ids: plan
+                .major_nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect(),
+            composition_hints: plan.composition_notes.iter().take(3).cloned().collect(),
+            focus_group_id: None,
+        });
     }
 
     stages
@@ -2232,6 +2349,185 @@ fn stage_nodes_schema() -> serde_json::Value {
     })
 }
 
+pub fn scene_operations_schema() -> serde_json::Value {
+    serde_json::json!({
+        "$defs": {
+            "point": {
+                "type": "object",
+                "properties": {
+                    "x": { "type": "number" },
+                    "y": { "type": "number" }
+                },
+                "required": ["x", "y"],
+                "additionalProperties": false
+            },
+            "scene_operation": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "create_group" },
+                            "node_id": { "type": "string" },
+                            "parent_id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "x": { "type": "number" },
+                            "y": { "type": "number" }
+                        },
+                        "required": ["op", "node_id", "parent_id", "name", "x", "y"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "create_rectangle" },
+                            "node_id": { "type": "string" },
+                            "parent_id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "x": { "type": "number" },
+                            "y": { "type": "number" },
+                            "width": { "type": "number" },
+                            "height": { "type": "number" },
+                            "corner_radius": { "type": "number" },
+                            "fill": { "type": "string" }
+                        },
+                        "required": ["op", "node_id", "parent_id", "name", "x", "y", "width", "height"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "create_ellipse" },
+                            "node_id": { "type": "string" },
+                            "parent_id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "x": { "type": "number" },
+                            "y": { "type": "number" },
+                            "radius_x": { "type": "number" },
+                            "radius_y": { "type": "number" },
+                            "fill": { "type": "string" }
+                        },
+                        "required": ["op", "node_id", "parent_id", "name", "x", "y", "radius_x", "radius_y"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "create_path" },
+                            "node_id": { "type": "string" },
+                            "parent_id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "x": { "type": "number" },
+                            "y": { "type": "number" },
+                            "points": {
+                                "type": "array",
+                                "items": { "$ref": "#/$defs/point" }
+                            },
+                            "closed": { "type": "boolean" },
+                            "fill": { "type": "string" }
+                        },
+                        "required": ["op", "node_id", "parent_id", "name", "x", "y", "points"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "create_text" },
+                            "node_id": { "type": "string" },
+                            "parent_id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "x": { "type": "number" },
+                            "y": { "type": "number" },
+                            "text": { "type": "string" },
+                            "font_size": { "type": "number" },
+                            "font_family": { "type": "string" },
+                            "line_height": { "type": "number" },
+                            "max_width": { "type": "number" },
+                            "align": { "type": "string", "enum": ["left", "center", "right"] },
+                            "fill": { "type": "string" }
+                        },
+                        "required": ["op", "node_id", "parent_id", "name", "x", "y", "text", "font_size"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "create_image_layer" },
+                            "node_id": { "type": "string" },
+                            "parent_id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "x": { "type": "number" },
+                            "y": { "type": "number" },
+                            "image_ref": { "type": "string" },
+                            "display_width": { "type": "number" },
+                            "display_height": { "type": "number" }
+                        },
+                        "required": ["op", "node_id", "parent_id", "name", "x", "y", "image_ref", "display_width", "display_height"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "set_transform" },
+                            "node_id": { "type": "string" },
+                            "x": { "type": "number" },
+                            "y": { "type": "number" },
+                            "scale_x": { "type": "number" },
+                            "scale_y": { "type": "number" },
+                            "rotation": { "type": "number" },
+                            "opacity": { "type": "number" }
+                        },
+                        "required": ["op", "node_id"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "replace_params" },
+                            "node_id": { "type": "string" },
+                            "params": { "type": "object" }
+                        },
+                        "required": ["op", "node_id", "params"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "replace_style" },
+                            "node_id": { "type": "string" },
+                            "style": { "type": "object" }
+                        },
+                        "required": ["op", "node_id", "style"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "op": { "const": "delete_node" },
+                            "node_id": { "type": "string" }
+                        },
+                        "required": ["op", "node_id"],
+                        "additionalProperties": false
+                    }
+                ]
+            }
+        },
+        "type": "object",
+        "properties": {
+            "summary": { "type": "string" },
+            "operations": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/scene_operation" }
+            },
+            "notes": {
+                "type": "array",
+                "items": { "type": "string" }
+            }
+        },
+        "required": ["summary", "operations", "notes"],
+        "additionalProperties": false
+    })
+}
+
 fn node_schema_value() -> serde_json::Value {
     let schema = serde_json::from_str::<serde_json::Value>(SCENE_DOCUMENT_SCHEMA)
         .unwrap_or_else(|_| serde_json::json!({}));
@@ -2454,9 +2750,10 @@ mod tests {
     use super::{
         AiAdapterError, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL,
         DEFAULT_GEMMA_FALLBACK_MODEL, GeneratedScene, ProviderConfig, ProviderKind, ResponseMode,
-        ScenePlan, ScenePlanCanvas, ScenePlanHierarchyNode, ScenePlanNode, StageKind, StageSpec,
-        can_finalize_staged_scene, gemini_endpoint, gemini_model_attempts,
-        generate_scene_from_prompt_with_config, scene_plan_schema,
+        SceneOperation, SceneOperationBatch, ScenePlan, ScenePlanCanvas, ScenePlanHierarchyNode,
+        ScenePlanNode, StageKind, StageSpec, can_finalize_staged_scene, gemini_endpoint,
+        gemini_model_attempts, generate_scene_from_prompt_with_config, scene_operations_schema,
+        scene_plan_schema,
     };
     use std::env;
     use std::sync::{Mutex, OnceLock};
@@ -2741,9 +3038,11 @@ mod tests {
 
         let stages = super::derive_stages_from_plan(&plan);
         assert_eq!(stages.len(), 2);
-        assert!(!stages
-            .iter()
-            .any(|stage| matches!(stage.kind, StageKind::Assembly)));
+        assert!(
+            !stages
+                .iter()
+                .any(|stage| matches!(stage.kind, StageKind::Assembly))
+        );
     }
 
     #[test]
@@ -2791,5 +3090,56 @@ mod tests {
         assert!(required.iter().any(|value| value == "summary"));
         assert!(required.iter().any(|value| value == "major_nodes"));
         assert!(required.iter().any(|value| value == "hierarchy"));
+    }
+
+    #[test]
+    fn scene_operations_schema_includes_core_ops() {
+        let schema = scene_operations_schema();
+        let serialized = serde_json::to_string(&schema).expect("schema should serialize");
+        assert!(serialized.contains("create_group"));
+        assert!(serialized.contains("create_rectangle"));
+        assert!(serialized.contains("set_transform"));
+        assert!(serialized.contains("replace_style"));
+    }
+
+    #[test]
+    fn scene_operation_batch_round_trips() {
+        let batch = SceneOperationBatch {
+            summary: "Build a pelican group".to_string(),
+            operations: vec![
+                SceneOperation::CreateGroup {
+                    node_id: "pelican_group".to_string(),
+                    parent_id: "main_subject_group".to_string(),
+                    name: "Pelican Group".to_string(),
+                    x: 240.0,
+                    y: 180.0,
+                },
+                SceneOperation::CreateEllipse {
+                    node_id: "pelican_body".to_string(),
+                    parent_id: "pelican_group".to_string(),
+                    name: "Pelican Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    radius_x: 90.0,
+                    radius_y: 60.0,
+                    fill: Some("#f2f2ea".to_string()),
+                },
+                SceneOperation::SetTransform {
+                    node_id: "pelican_group".to_string(),
+                    x: Some(260.0),
+                    y: Some(190.0),
+                    scale_x: None,
+                    scale_y: None,
+                    rotation: Some(-4.0),
+                    opacity: None,
+                },
+            ],
+            notes: vec!["Use this as a future Gemini tool-call contract.".to_string()],
+        };
+
+        let json = serde_json::to_string_pretty(&batch).expect("batch should serialize");
+        let reparsed =
+            serde_json::from_str::<SceneOperationBatch>(&json).expect("batch should parse");
+        assert_eq!(reparsed, batch);
     }
 }
