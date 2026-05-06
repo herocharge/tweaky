@@ -1,0 +1,906 @@
+{
+  "version": "0.1",
+  "document": {
+    "id": "doc_pelican_bicycle_raster",
+    "name": "Pelican Riding a Bicycle Raster Hybrid",
+    "width": 1400,
+    "height": 900,
+    "background": {
+      "type": "solid",
+      "color": "#f0e6d3"
+    },
+    "resources": {
+      "images": {
+        "pelican_head_patch": {
+          "path": "assets/pelican_head_patch.png",
+          "width": 1254,
+          "height": 1254,
+          "alphaMode": "straight",
+          "generationMode": "raster_patch",
+          "prompt": "Pelican head patch for a whimsical polished storybook-editorial illustration."
+        },
+        "pelican_body_patch": {
+          "path": "assets/pelican_body_patch.png",
+          "width": 1402,
+          "height": 1122,
+          "alphaMode": "straight",
+          "generationMode": "raster_patch",
+          "prompt": "Pelican body patch for a whimsical polished storybook-editorial illustration."
+        },
+        "pelican_legs_patch": {
+          "path": "assets/pelican_legs_patch.png",
+          "width": 1254,
+          "height": 1254,
+          "alphaMode": "straight",
+          "generationMode": "raster_patch",
+          "prompt": "Pelican legs patch for a whimsical polished storybook-editorial illustration."
+        }
+      },
+      "fonts": {},
+      "palettes": {}
+    },
+    "root": {
+      "id": "root",
+      "type": "Group",
+      "name": "Root",
+      "visible": true,
+      "locked": false,
+      "blendMode": "normal",
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "scaleX": 1,
+        "scaleY": 1,
+        "rotation": 0,
+        "opacity": 1
+      },
+      "params": {},
+      "style": {},
+      "children": [
+        {
+          "id": "background_card",
+          "type": "Rectangle",
+          "name": "Background Card",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 58,
+            "y": 68,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "width": 1284,
+            "height": 762,
+            "cornerRadius": 36
+          },
+          "style": {
+            "fill": "#fff8ec",
+            "shadow": {
+              "color": "#cfbda5",
+              "offsetX": 0,
+              "offsetY": 12,
+              "blur": 16
+            }
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "sun",
+          "type": "Ellipse",
+          "name": "Sun",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 1120,
+            "y": 114,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 0.92
+          },
+          "params": {
+            "radiusX": 62,
+            "radiusY": 62
+          },
+          "style": {
+            "fill": "#efc14f"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "cloud_group",
+          "type": "Group",
+          "name": "Cloud Group",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 930,
+            "y": 128,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 0.95
+          },
+          "params": {},
+          "style": {},
+          "children": [
+            {
+              "id": "cloud_puff_a",
+              "type": "Ellipse",
+              "name": "Cloud Puff A",
+              "visible": true,
+              "locked": false,
+              "blendMode": "normal",
+              "transform": {
+                "x": 0,
+                "y": 16,
+                "scaleX": 1,
+                "scaleY": 1,
+                "rotation": 0,
+                "opacity": 1
+              },
+              "params": {
+                "radiusX": 34,
+                "radiusY": 24
+              },
+              "style": {
+                "fill": "#ffffff"
+              },
+              "children": [],
+              "meta": {}
+            },
+            {
+              "id": "cloud_puff_b",
+              "type": "Ellipse",
+              "name": "Cloud Puff B",
+              "visible": true,
+              "locked": false,
+              "blendMode": "normal",
+              "transform": {
+                "x": 28,
+                "y": 0,
+                "scaleX": 1,
+                "scaleY": 1,
+                "rotation": 0,
+                "opacity": 1
+              },
+              "params": {
+                "radiusX": 44,
+                "radiusY": 32
+              },
+              "style": {
+                "fill": "#ffffff"
+              },
+              "children": [],
+              "meta": {}
+            },
+            {
+              "id": "cloud_puff_c",
+              "type": "Ellipse",
+              "name": "Cloud Puff C",
+              "visible": true,
+              "locked": false,
+              "blendMode": "normal",
+              "transform": {
+                "x": 64,
+                "y": 14,
+                "scaleX": 1,
+                "scaleY": 1,
+                "rotation": 0,
+                "opacity": 1
+              },
+              "params": {
+                "radiusX": 36,
+                "radiusY": 26
+              },
+              "style": {
+                "fill": "#ffffff"
+              },
+              "children": [],
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "id": "title",
+          "type": "Text",
+          "name": "Title",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 118,
+            "y": 116,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "text": "A drawing of a pelican\nriding a bicycle",
+            "fontSize": 60,
+            "fontFamily": "Inter",
+            "lineHeight": 1.02,
+            "maxWidth": 430,
+            "align": "left"
+          },
+          "style": {
+            "fill": "#2f241f",
+            "shadow": {
+              "color": "#cbbfae",
+              "offsetX": 0,
+              "offsetY": 7,
+              "blur": 8
+            }
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "subtitle",
+          "type": "Text",
+          "name": "Subtitle",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 120,
+            "y": 392,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "text": "Hybrid benchmark with generated raster pelican parts.",
+            "fontSize": 24,
+            "fontFamily": "Inter",
+            "lineHeight": 1.25,
+            "maxWidth": 340,
+            "align": "left"
+          },
+          "style": {
+            "fill": "#6e5a4d"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "caption",
+          "type": "Text",
+          "name": "Caption",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 955,
+            "y": 724,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {
+            "text": "Head, body, and legs are separate raster patches over a structured bicycle.",
+            "fontSize": 25,
+            "fontFamily": "Inter",
+            "lineHeight": 1.15,
+            "maxWidth": 290,
+            "align": "right"
+          },
+          "style": {
+            "fill": "#6e5a4d"
+          },
+          "children": [],
+          "meta": {}
+        },
+        {
+          "id": "motion_lines_group",
+          "type": "Group",
+          "name": "Motion Lines",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {},
+          "style": {},
+          "children": [
+            {
+              "id": "motion_line_1",
+              "type": "Rectangle",
+              "name": "Motion Line 1",
+              "visible": true,
+              "locked": false,
+              "blendMode": "normal",
+              "transform": {
+                "x": 358,
+                "y": 474,
+                "scaleX": 1,
+                "scaleY": 1,
+                "rotation": -6,
+                "opacity": 0.8
+              },
+              "params": {
+                "width": 96,
+                "height": 10,
+                "cornerRadius": 5
+              },
+              "style": {
+                "fill": "#d7cbb6"
+              },
+              "children": [],
+              "meta": {}
+            },
+            {
+              "id": "motion_line_2",
+              "type": "Rectangle",
+              "name": "Motion Line 2",
+              "visible": true,
+              "locked": false,
+              "blendMode": "normal",
+              "transform": {
+                "x": 326,
+                "y": 528,
+                "scaleX": 1,
+                "scaleY": 1,
+                "rotation": -6,
+                "opacity": 0.7
+              },
+              "params": {
+                "width": 120,
+                "height": 10,
+                "cornerRadius": 5
+              },
+              "style": {
+                "fill": "#d7cbb6"
+              },
+              "children": [],
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        },
+        {
+          "id": "subject_group",
+          "type": "Group",
+          "name": "Subject Group",
+          "visible": true,
+          "locked": false,
+          "blendMode": "normal",
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "rotation": 0,
+            "opacity": 1
+          },
+          "params": {},
+          "style": {},
+          "children": [
+            {
+              "id": "ground_shadow",
+              "type": "Ellipse",
+              "name": "Ground Shadow",
+              "visible": true,
+              "locked": false,
+              "blendMode": "normal",
+              "transform": {
+                "x": 430,
+                "y": 662,
+                "scaleX": 1,
+                "scaleY": 1,
+                "rotation": 0,
+                "opacity": 0.28
+              },
+              "params": {
+                "radiusX": 346,
+                "radiusY": 52
+              },
+              "style": {
+                "fill": "#b8a894",
+                "blur": 12
+              },
+              "children": [],
+              "meta": {}
+            },
+            {
+              "id": "bicycle_group",
+              "type": "Group",
+              "name": "Bicycle Group",
+              "visible": true,
+              "locked": false,
+              "blendMode": "normal",
+              "transform": {
+                "x": 40,
+                "y": 32,
+                "scaleX": 1,
+                "scaleY": 1,
+                "rotation": 0,
+                "opacity": 1
+              },
+              "params": {},
+              "style": {},
+              "children": [
+                {
+                  "id": "rear_wheel",
+                  "type": "Ellipse",
+                  "name": "Rear Wheel",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 360,
+                    "y": 520,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "radiusX": 110,
+                    "radiusY": 110
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "rear_wheel_inner",
+                  "type": "Ellipse",
+                  "name": "Rear Wheel Inner",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 395,
+                    "y": 555,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "radiusX": 75,
+                    "radiusY": 75
+                  },
+                  "style": {
+                    "fill": "#fff8ec"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "front_wheel",
+                  "type": "Ellipse",
+                  "name": "Front Wheel",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 820,
+                    "y": 520,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "radiusX": 110,
+                    "radiusY": 110
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "front_wheel_inner",
+                  "type": "Ellipse",
+                  "name": "Front Wheel Inner",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 855,
+                    "y": 555,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "radiusX": 75,
+                    "radiusY": 75
+                  },
+                  "style": {
+                    "fill": "#fff8ec"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "bike_frame",
+                  "type": "Path",
+                  "name": "Bike Frame",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 380,
+                    "y": 400,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "closed": false,
+                    "points": [
+                      {"x": 0, "y": 130},
+                      {"x": 150, "y": 20},
+                      {"x": 320, "y": 130},
+                      {"x": 150, "y": 130},
+                      {"x": 80, "y": 20},
+                      {"x": 150, "y": 130},
+                      {"x": 200, "y": 0},
+                      {"x": 320, "y": 130}
+                    ]
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "handlebar",
+                  "type": "Path",
+                  "name": "Handlebar",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 700,
+                    "y": 360,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "closed": false,
+                    "points": [
+                      {"x": 0, "y": 0},
+                      {"x": 55, "y": -35},
+                      {"x": 105, "y": -5}
+                    ]
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "seat_post",
+                  "type": "Path",
+                  "name": "Seat Post",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 520,
+                    "y": 340,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "closed": false,
+                    "points": [
+                      {"x": 0, "y": 0},
+                      {"x": 0, "y": 70},
+                      {"x": 42, "y": 58}
+                    ]
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "bike_seat",
+                  "type": "Rectangle",
+                  "name": "Bike Seat",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 500,
+                    "y": 332,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": -8,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "width": 60,
+                    "height": 12,
+                    "cornerRadius": 6
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "crank_hub",
+                  "type": "Ellipse",
+                  "name": "Crank Hub",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 596,
+                    "y": 516,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "radiusX": 18,
+                    "radiusY": 18
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "pedal_arm_front",
+                  "type": "Path",
+                  "name": "Pedal Arm Front",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 614,
+                    "y": 534,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "closed": false,
+                    "points": [
+                      {"x": 0, "y": 0},
+                      {"x": 120, "y": 108}
+                    ]
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "pedal_arm_rear",
+                  "type": "Path",
+                  "name": "Pedal Arm Rear",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 614,
+                    "y": 534,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "closed": false,
+                    "points": [
+                      {"x": 0, "y": 0},
+                      {"x": -42, "y": -96}
+                    ]
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "pedal_front",
+                  "type": "Rectangle",
+                  "name": "Front Pedal",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 716,
+                    "y": 628,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 16,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "width": 58,
+                    "height": 12,
+                    "cornerRadius": 6
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                },
+                {
+                  "id": "pedal_rear",
+                  "type": "Rectangle",
+                  "name": "Rear Pedal",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 542,
+                    "y": 430,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": -18,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "width": 52,
+                    "height": 12,
+                    "cornerRadius": 6
+                  },
+                  "style": {
+                    "fill": "#2f241f"
+                  },
+                  "children": [],
+                  "meta": {}
+                }
+              ],
+              "meta": {}
+            },
+            {
+              "id": "pelican_group",
+              "type": "Group",
+              "name": "Pelican Group",
+              "visible": true,
+              "locked": false,
+              "blendMode": "normal",
+              "transform": {
+                "x": 0,
+                "y": 0,
+                "scaleX": 1,
+                "scaleY": 1,
+                "rotation": 0,
+                "opacity": 1
+              },
+              "params": {},
+              "style": {},
+              "children": [
+                {
+                  "id": "pelican_body_layer",
+                  "type": "ImageLayer",
+                  "name": "Pelican Body Patch",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 445,
+                    "y": 238,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "imageRef": "pelican_body_patch",
+                    "displayWidth": 540,
+                    "displayHeight": 432,
+                    "nativeScaleHint": 1.0
+                  },
+                  "style": {},
+                  "children": [],
+                  "meta": {
+                    "promptProvenance": "Pelican body patch for a whimsical polished storybook-editorial illustration."
+                  }
+                },
+                {
+                  "id": "pelican_legs_layer",
+                  "type": "ImageLayer",
+                  "name": "Pelican Legs Patch",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 578,
+                    "y": 462,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "imageRef": "pelican_legs_patch",
+                    "displayWidth": 290,
+                    "displayHeight": 290,
+                    "nativeScaleHint": 1.0
+                  },
+                  "style": {},
+                  "children": [],
+                  "meta": {
+                    "promptProvenance": "Pelican legs patch for a whimsical polished storybook-editorial illustration."
+                  }
+                },
+                {
+                  "id": "pelican_head_layer",
+                  "type": "ImageLayer",
+                  "name": "Pelican Head Patch",
+                  "visible": true,
+                  "locked": false,
+                  "blendMode": "normal",
+                  "transform": {
+                    "x": 704,
+                    "y": 176,
+                    "scaleX": 1,
+                    "scaleY": 1,
+                    "rotation": 0,
+                    "opacity": 1
+                  },
+                  "params": {
+                    "imageRef": "pelican_head_patch",
+                    "displayWidth": 330,
+                    "displayHeight": 330,
+                    "nativeScaleHint": 1.0
+                  },
+                  "style": {},
+                  "children": [],
+                  "meta": {
+                    "promptProvenance": "Pelican head patch for a whimsical polished storybook-editorial illustration."
+                  }
+                }
+              ],
+              "meta": {}
+            }
+          ],
+          "meta": {}
+        }
+      ],
+      "meta": {
+        "benchmarkPrompt": "a drawing of a pelican riding a bicycle"
+      }
+    }
+  }
+}
