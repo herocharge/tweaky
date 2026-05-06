@@ -119,16 +119,6 @@ enum SceneTemplateKind {
     Hybrid,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawAiSceneResponse {
-    mode: ResponseMode,
-    summary: String,
-    #[serde(default)]
-    document: Option<serde_json::Value>,
-    #[serde(default)]
-    notes: Vec<String>,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
@@ -1399,34 +1389,6 @@ fn insert_node_under_parent(current: &mut SceneNode, parent_id: &str, node: Scen
     false
 }
 
-fn critique_and_maybe_revise_scene(
-    config: &ProviderConfig,
-    api_key: &str,
-    prompt: &str,
-    scene: &SceneFile,
-    model: &str,
-) -> Result<Option<GeneratedScene>, AiAdapterError> {
-    let rendered_png = render_scene_png(scene)?;
-    let critique =
-        request_gemini_scene_critique(config, api_key, prompt, scene, &rendered_png, model)?;
-
-    if critique.satisfactory || critique.revision_goals.is_empty() {
-        return Ok(None);
-    }
-
-    let revised_response = request_gemini_scene_revision(
-        config,
-        api_key,
-        prompt,
-        scene,
-        &rendered_png,
-        &critique,
-        model,
-    )?;
-    let revised_generated = validate_generated_response(revised_response)?;
-    Ok(Some(revised_generated))
-}
-
 fn critique_stage_and_maybe_request_retry(
     config: &ProviderConfig,
     api_key: &str,
@@ -1529,79 +1491,6 @@ fn request_gemini_scene_plan(
     Ok(plan)
 }
 
-fn request_gemini_scene_from_plan(
-    config: &ProviderConfig,
-    api_key: &str,
-    prompt: &str,
-    template_kind: SceneTemplateKind,
-    template_scene: &str,
-    plan: &ScenePlan,
-    model: &str,
-    repair_feedback: Option<&str>,
-) -> Result<AiSceneResponse, AiAdapterError> {
-    let endpoint = gemini_endpoint(config, model);
-    let request = GeminiGenerateContentRequest {
-        system_instruction: GeminiContent {
-            parts: vec![GeminiPart::text(gemini_system_instruction(model))],
-        },
-        contents: vec![GeminiContent {
-            parts: vec![GeminiPart::text(gemini_plan_to_scene_prompt(
-                prompt,
-                template_kind,
-                template_scene,
-                plan,
-                repair_feedback,
-            ))],
-        }],
-        generation_config: GeminiGenerationConfig {
-            response_mime_type: "application/json".to_string(),
-            response_json_schema: response_envelope_schema(),
-            temperature: Some(0.3),
-        },
-    };
-
-    let json_text = send_gemini_request(
-        config,
-        api_key,
-        model,
-        "scene_from_plan",
-        endpoint,
-        &request,
-    )?;
-    parse_ai_scene_response(&json_text)
-}
-
-fn request_gemini_scene_critique(
-    config: &ProviderConfig,
-    api_key: &str,
-    prompt: &str,
-    scene: &SceneFile,
-    rendered_png: &[u8],
-    model: &str,
-) -> Result<SceneCritique, AiAdapterError> {
-    let endpoint = gemini_endpoint(config, model);
-    let request = GeminiGenerateContentRequest {
-        system_instruction: GeminiContent {
-            parts: vec![GeminiPart::text(gemini_critique_system_instruction(model))],
-        },
-        contents: vec![GeminiContent {
-            parts: vec![
-                GeminiPart::text(gemini_critique_user_prompt(prompt, scene)),
-                GeminiPart::inline_png(rendered_png),
-            ],
-        }],
-        generation_config: GeminiGenerationConfig {
-            response_mime_type: "application/json".to_string(),
-            response_json_schema: scene_critique_schema(),
-            temperature: Some(0.2),
-        },
-    };
-
-    let json_text = send_gemini_request(config, api_key, model, "critique", endpoint, &request)?;
-    serde_json::from_str::<SceneCritique>(&json_text)
-        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
-}
-
 fn request_gemini_stage_critique(
     config: &ProviderConfig,
     api_key: &str,
@@ -1642,71 +1531,6 @@ fn request_gemini_stage_critique(
     )?;
     serde_json::from_str::<SceneCritique>(&json_text)
         .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
-}
-
-fn request_gemini_scene_revision(
-    config: &ProviderConfig,
-    api_key: &str,
-    prompt: &str,
-    scene: &SceneFile,
-    rendered_png: &[u8],
-    critique: &SceneCritique,
-    model: &str,
-) -> Result<AiSceneResponse, AiAdapterError> {
-    let endpoint = gemini_endpoint(config, model);
-    let request = GeminiGenerateContentRequest {
-        system_instruction: GeminiContent {
-            parts: vec![GeminiPart::text(gemini_system_instruction(model))],
-        },
-        contents: vec![GeminiContent {
-            parts: vec![
-                GeminiPart::text(gemini_revision_user_prompt(prompt, scene, critique)),
-                GeminiPart::inline_png(rendered_png),
-            ],
-        }],
-        generation_config: GeminiGenerationConfig {
-            response_mime_type: "application/json".to_string(),
-            response_json_schema: response_envelope_schema(),
-            temperature: Some(0.25),
-        },
-    };
-
-    let json_text = send_gemini_request(config, api_key, model, "revision", endpoint, &request)?;
-    parse_ai_scene_response(&json_text)
-}
-
-fn request_gemini_scene(
-    config: &ProviderConfig,
-    api_key: &str,
-    prompt: &str,
-    template_kind: SceneTemplateKind,
-    template_scene: &str,
-    model: &str,
-    repair_feedback: Option<&str>,
-) -> Result<AiSceneResponse, AiAdapterError> {
-    let endpoint = gemini_endpoint(config, model);
-    let request = GeminiGenerateContentRequest {
-        system_instruction: GeminiContent {
-            parts: vec![GeminiPart::text(gemini_system_instruction(model))],
-        },
-        contents: vec![GeminiContent {
-            parts: vec![GeminiPart::text(gemini_user_prompt(
-                prompt,
-                template_kind,
-                template_scene,
-                repair_feedback,
-            ))],
-        }],
-        generation_config: GeminiGenerationConfig {
-            response_mime_type: "application/json".to_string(),
-            response_json_schema: response_envelope_schema(),
-            temperature: Some(0.4),
-        },
-    };
-
-    let json_text =
-        send_gemini_request(config, api_key, model, "scene_direct", endpoint, &request)?;
-    parse_ai_scene_response(&json_text)
 }
 
 fn send_gemini_request(
@@ -2051,44 +1875,6 @@ fn sanitize_trace_value(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
-fn parse_ai_scene_response(json_text: &str) -> Result<AiSceneResponse, AiAdapterError> {
-    let mut raw: RawAiSceneResponse = serde_json::from_str(json_text)
-        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))?;
-    let document = raw
-        .document
-        .take()
-        .map(repair_scene_document_value)
-        .map(parse_scene_value)
-        .transpose()?;
-
-    Ok(AiSceneResponse {
-        mode: raw.mode,
-        summary: raw.summary,
-        document,
-        notes: raw.notes,
-    })
-}
-
-fn parse_scene_value(value: serde_json::Value) -> Result<SceneFile, AiAdapterError> {
-    serde_json::from_value(value).map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
-}
-
-fn repair_scene_document_value(value: serde_json::Value) -> serde_json::Value {
-    let mut root = match value {
-        serde_json::Value::Object(map) => map,
-        other => return other,
-    };
-
-    if !root.contains_key("version") {
-        root.insert(
-            "version".to_string(),
-            serde_json::Value::String("0.1".to_string()),
-        );
-    }
-
-    serde_json::Value::Object(root)
-}
-
 fn gemini_endpoint(config: &ProviderConfig, model: &str) -> String {
     let base = config
         .base_url
@@ -2096,27 +1882,6 @@ fn gemini_endpoint(config: &ProviderConfig, model: &str) -> String {
         .unwrap_or(DEFAULT_GEMINI_BASE_URL)
         .trim_end_matches('/');
     format!("{base}/models/{model}:generateContent")
-}
-
-fn gemini_system_instruction(model: &str) -> String {
-    format!(
-        concat!(
-            "Target model: {}.\n",
-            "You generate tweaky scene documents.\n",
-            "Return JSON only.\n",
-            "Return an object with keys mode, summary, document, and notes.\n",
-            "mode must be full_document.\n",
-            "document must be a complete tweaky scene JSON document that follows this schema.\n",
-            "Do not return placeholders, empty documents, or empty root children arrays.\n",
-            "The root group must contain multiple meaningful drawable child nodes.\n",
-            "Do not include markdown fences or prose outside JSON.\n",
-            "Prefer the node types Group, Rectangle, Ellipse, Path, Text, and ImageLayer.\n",
-            "Use named nodes, stable ids, explicit transforms, and editable structure.\n",
-            "If painterly detail is difficult to represent structurally, use ImageLayer only when necessary.\n",
-            "Schema:\n{}\n"
-        ),
-        model, SCENE_DOCUMENT_SCHEMA
-    )
 }
 
 fn gemini_plan_system_instruction(model: &str) -> String {
@@ -2251,109 +2016,6 @@ fn gemini_critique_system_instruction(model: &str) -> String {
     )
 }
 
-fn gemini_user_prompt(
-    prompt: &str,
-    template_kind: SceneTemplateKind,
-    template_scene: &str,
-    repair_feedback: Option<&str>,
-) -> String {
-    let repair_block = repair_feedback
-        .map(|feedback| {
-            format!(
-                concat!(
-                    "\nRepair feedback from the previous attempt:\n",
-                    "{}\n",
-                    "Fix that issue directly in this attempt.\n"
-                ),
-                feedback
-            )
-        })
-        .unwrap_or_default();
-
-    format!(
-        concat!(
-            "Create a new tweaky scene document for this request:\n",
-            "{}\n\n",
-            "Use this scaffold family as a starting point: {}.\n",
-            "Template scene:\n{}\n\n",
-            "Canvas guidance:\n",
-            "- use a reasonable poster-like canvas size\n",
-            "- include a complete root hierarchy\n",
-            "- the root must include multiple non-empty drawable child nodes\n",
-            "- do not leave `children` empty and do not return a placeholder scene\n",
-            "- keep the result funny, editable, and visually readable\n",
-            "- notes should briefly explain key scene construction choices\n\n",
-            "Here are valid example tweaky scenes. Match their structural completeness and naming quality.\n\n",
-            "Example 1: playful structured poster\n{}\n\n",
-            "Example 2: hybrid structured plus raster scene\n{}\n",
-            "{}"
-        ),
-        prompt,
-        template_name(template_kind),
-        template_scene,
-        PELICAN_BICYCLE,
-        HYBRID_SCENE,
-        repair_block
-    )
-}
-
-fn gemini_plan_to_scene_prompt(
-    prompt: &str,
-    template_kind: SceneTemplateKind,
-    template_scene: &str,
-    plan: &ScenePlan,
-    repair_feedback: Option<&str>,
-) -> String {
-    let repair_block = repair_feedback
-        .map(|feedback| {
-            format!(
-                concat!(
-                    "\nRepair feedback from the previous attempt:\n",
-                    "{}\n",
-                    "Fix that issue directly in this attempt.\n"
-                ),
-                feedback
-            )
-        })
-        .unwrap_or_default();
-
-    format!(
-        concat!(
-            "Create a complete tweaky scene document for this request:\n",
-            "{}\n\n",
-            "Use this scaffold family as the structural base: {}.\n",
-            "Template scene:\n{}\n\n",
-            "Use this scene plan as the source of truth:\n",
-            "{}\n\n",
-            "Requirements:\n",
-            "- fully realize the plan into valid tweaky scene JSON\n",
-            "- keep the hierarchy editable and non-empty\n",
-            "- preserve the plan's major nodes and composition\n",
-            "- return the final response envelope only\n",
-            "{}"
-        ),
-        prompt,
-        template_name(template_kind),
-        template_scene,
-        serde_json::to_string_pretty(plan).unwrap_or_else(|_| "{}".to_string()),
-        repair_block
-    )
-}
-
-fn gemini_critique_user_prompt(prompt: &str, scene: &SceneFile) -> String {
-    format!(
-        concat!(
-            "User prompt:\n{}\n\n",
-            "Current scene JSON:\n{}\n\n",
-            "Critique whether the rendered image matches the user's intent.\n",
-            "If it is good enough, mark satisfactory true.\n",
-            "If not, identify the key visual failures and concrete revision goals.\n"
-        ),
-        prompt,
-        serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string())
-    )
-}
-
 fn gemini_stage_critique_user_prompt(
     prompt: &str,
     scene: &SceneFile,
@@ -2384,53 +2046,6 @@ fn gemini_stage_critique_user_prompt(
         stage.composition_hints.join("\n"),
         serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string())
     )
-}
-
-fn gemini_revision_user_prompt(
-    prompt: &str,
-    scene: &SceneFile,
-    critique: &SceneCritique,
-) -> String {
-    format!(
-        concat!(
-            "Revise this tweaky scene.\n\n",
-            "User prompt:\n{}\n\n",
-            "Current scene JSON:\n{}\n\n",
-            "Critique summary:\n{}\n\n",
-            "Revision goals:\n{}\n\n",
-            "Return a full revised tweaky scene response envelope.\n",
-            "Preserve any good structure that already works.\n"
-        ),
-        prompt,
-        serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string()),
-        critique.summary,
-        critique.revision_goals.join("\n")
-    )
-}
-
-fn response_envelope_schema() -> serde_json::Value {
-    let document_schema: serde_json::Value = serde_json::from_str(SCENE_DOCUMENT_SCHEMA)
-        .unwrap_or_else(|_| serde_json::json!({ "type": "object" }));
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "mode": {
-                "type": "string",
-                "enum": ["full_document"]
-            },
-            "summary": {
-                "type": "string"
-            },
-            "document": document_schema,
-            "notes": {
-                "type": "array",
-                "items": {
-                    "type": "string"
-                }
-            }
-        },
-        "required": ["mode", "summary", "document", "notes"]
-    })
 }
 
 fn scene_plan_schema() -> serde_json::Value {
@@ -2757,12 +2372,11 @@ struct GeminiErrorPayload {
 #[cfg(test)]
 mod tests {
     use super::{
-        AiAdapterError, BASIC_POSTER, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL,
+        AiAdapterError, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL,
         DEFAULT_GEMMA_FALLBACK_MODEL, GeneratedScene, ProviderConfig, ProviderKind, ResponseMode,
-        ScenePlan, ScenePlanCanvas, ScenePlanHierarchyNode, ScenePlanNode, SceneTemplateKind,
-        StageKind, StageSpec, can_finalize_staged_scene, gemini_endpoint, gemini_model_attempts,
-        gemini_plan_to_scene_prompt, gemini_user_prompt, generate_scene_from_prompt_with_config,
-        parse_ai_scene_response, scene_plan_schema,
+        ScenePlan, ScenePlanCanvas, ScenePlanHierarchyNode, ScenePlanNode, StageKind, StageSpec,
+        can_finalize_staged_scene, gemini_endpoint, gemini_model_attempts,
+        generate_scene_from_prompt_with_config, scene_plan_schema,
     };
     use std::env;
     use std::sync::{Mutex, OnceLock};
@@ -2929,67 +2543,6 @@ mod tests {
     }
 
     #[test]
-    fn repairs_missing_scene_version_in_ai_response() {
-        let response = parse_ai_scene_response(
-            r##"{
-              "mode": "full_document",
-              "summary": "Pelican test",
-              "document": {
-                "document": {
-                  "id": "scene_1",
-                  "name": "Pelican Test",
-                  "width": 1200,
-                  "height": 900,
-                  "background": { "type": "solid", "color": "#ffffff" },
-                  "resources": { "images": {}, "fonts": {}, "palettes": {} },
-                  "root": {
-                    "id": "root",
-                    "type": "Group",
-                    "name": "Root",
-                    "visible": true,
-                    "locked": false,
-                    "blendMode": "normal",
-                    "transform": {
-                      "x": 0.0,
-                      "y": 0.0,
-                      "scaleX": 1.0,
-                      "scaleY": 1.0,
-                      "rotation": 0.0,
-                      "opacity": 1.0
-                    },
-                    "params": {},
-                    "style": {},
-                    "children": [],
-                    "meta": {}
-                  }
-                }
-              },
-              "notes": []
-            }"##,
-        )
-        .expect("response should parse after repair");
-
-        assert_eq!(
-            response.document.expect("document should exist").version,
-            "0.1"
-        );
-    }
-
-    #[test]
-    fn gemini_prompt_includes_examples_and_feedback() {
-        let prompt = gemini_user_prompt(
-            "a drawing of a pelican riding a bicycle",
-            SceneTemplateKind::Poster,
-            BASIC_POSTER,
-            Some("missing document"),
-        );
-
-        assert!(prompt.contains("Example 1: playful structured poster"));
-        assert!(prompt.contains("Example 2: hybrid structured plus raster scene"));
-        assert!(prompt.contains("missing document"));
-    }
-
-    #[test]
     fn scene_plan_prompt_embeds_plan_json() {
         let plan = ScenePlan {
             summary: "Pelican on bike".to_string(),
@@ -3020,17 +2573,9 @@ mod tests {
             },
         };
 
-        let prompt = gemini_plan_to_scene_prompt(
-            "a drawing of a pelican riding a bicycle",
-            SceneTemplateKind::Poster,
-            BASIC_POSTER,
-            &plan,
-            Some("root was empty"),
-        );
-
-        assert!(prompt.contains("\"summary\": \"Pelican on bike\""));
-        assert!(prompt.contains("root was empty"));
-        assert!(prompt.contains("pelican_body"));
+        let normalized = super::normalized_plan_hierarchy(&plan);
+        assert_eq!(normalized.children.len(), 1);
+        assert_eq!(normalized.children[0].id, "pelican_body");
     }
 
     #[test]
