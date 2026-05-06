@@ -10,6 +10,7 @@
 .env.*
 !.env.example
 .traces/
+.tweaky-ai-cache/
 
 # Rust
 target/

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,6 +31,7 @@ pub const DEFAULT_BASE_URL_ENV_VAR: &str = "TWEAKY_AI_BASE_URL";
 pub const DEFAULT_FALLBACK_MODELS_ENV_VAR: &str = "TWEAKY_AI_FALLBACK_MODELS";
 pub const DISABLE_FALLBACK_ENV_VAR: &str = "TWEAKY_AI_DISABLE_FALLBACK";
 pub const DEFAULT_TRACE_DIR_ENV_VAR: &str = "TWEAKY_AI_TRACE_DIR";
+pub const DEFAULT_PLAN_CACHE_DIR_ENV_VAR: &str = "TWEAKY_AI_PLAN_CACHE_DIR";
 
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 static GEMINI_RATE_LIMITER: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
@@ -1602,6 +1604,10 @@ fn request_gemini_scene_plan(
     template_scene: &str,
     model: &str,
 ) -> Result<ScenePlan, AiAdapterError> {
+    if let Some(cached_plan) = read_cached_scene_plan(prompt, template_kind) {
+        return Ok(cached_plan);
+    }
+
     let endpoint = gemini_endpoint(config, model);
     let request = GeminiGenerateContentRequest {
         system_instruction: GeminiContent {
@@ -1622,8 +1628,10 @@ fn request_gemini_scene_plan(
     };
 
     let json_text = send_gemini_request(config, api_key, model, "plan", endpoint, &request)?;
-    serde_json::from_str::<ScenePlan>(&json_text)
-        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
+    let plan = serde_json::from_str::<ScenePlan>(&json_text)
+        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))?;
+    write_cached_scene_plan(prompt, template_kind, &plan);
+    Ok(plan)
 }
 
 fn request_gemini_scene_from_plan(
@@ -1814,8 +1822,36 @@ fn send_gemini_request(
     endpoint: String,
     request: &GeminiGenerateContentRequest,
 ) -> Result<String, AiAdapterError> {
-    respect_gemini_rate_limit(model);
+    let max_attempts = gemini_request_max_attempts(model);
+    let mut last_error = None;
 
+    for attempt in 0..max_attempts {
+        respect_gemini_rate_limit(model);
+        match send_gemini_request_once(config, api_key, model, phase, &endpoint, request) {
+            Ok(response) => return Ok(response),
+            Err(error) if attempt + 1 < max_attempts && is_retryable_gemini_error(&error) => {
+                last_error = Some(error);
+                std::thread::sleep(gemini_retry_backoff(attempt));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        AiAdapterError::ApiResponseFailed(format!(
+            "Gemini request failed without a final error via {model}"
+        ))
+    }))
+}
+
+fn send_gemini_request_once(
+    config: &ProviderConfig,
+    api_key: &str,
+    model: &str,
+    phase: &str,
+    endpoint: &str,
+    request: &GeminiGenerateContentRequest,
+) -> Result<String, AiAdapterError> {
     let request_trace =
         sanitize_trace_value(serde_json::to_value(request).unwrap_or_else(
             |_| serde_json::json!({ "trace_error": "failed to serialize request" }),
@@ -1963,6 +1999,18 @@ fn send_gemini_request(
     Ok(json_text)
 }
 
+fn gemini_request_max_attempts(model: &str) -> usize {
+    if model.contains("gemma-4") { 4 } else { 3 }
+}
+
+fn gemini_retry_backoff(attempt: usize) -> Duration {
+    match attempt {
+        0 => Duration::from_secs(2),
+        1 => Duration::from_secs(5),
+        _ => Duration::from_secs(10),
+    }
+}
+
 fn respect_gemini_rate_limit(model: &str) {
     let Some(min_spacing) = gemini_min_spacing_for_model(model) else {
         return;
@@ -1983,6 +2031,43 @@ fn respect_gemini_rate_limit(model: &str) {
     }
 
     state.insert(model.to_string(), Instant::now());
+}
+
+fn read_cached_scene_plan(prompt: &str, template_kind: SceneTemplateKind) -> Option<ScenePlan> {
+    let path = plan_cache_file_path(prompt, template_kind)?;
+    let contents = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<ScenePlan>(&contents).ok()
+}
+
+fn write_cached_scene_plan(prompt: &str, template_kind: SceneTemplateKind, plan: &ScenePlan) {
+    let Some(path) = plan_cache_file_path(prompt, template_kind) else {
+        return;
+    };
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(serialized) = serde_json::to_string_pretty(plan) else {
+        return;
+    };
+    let _ = fs::write(path, serialized);
+}
+
+fn plan_cache_file_path(
+    prompt: &str,
+    template_kind: SceneTemplateKind,
+) -> Option<std::path::PathBuf> {
+    let cache_root = env::var(DEFAULT_PLAN_CACHE_DIR_ENV_VAR)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| ".tweaky-ai-cache/plans".to_string());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    prompt.hash(&mut hasher);
+    template_name(template_kind).hash(&mut hasher);
+    let cache_key = format!("{:016x}", hasher.finish());
+    Some(Path::new(&cache_root).join(format!("{cache_key}.json")))
 }
 
 fn gemini_min_spacing_for_model(model: &str) -> Option<Duration> {
