@@ -21,6 +21,7 @@ const HYBRID_SCENE: &str = include_str!("../../../examples/hybrid_scene.vsd.json
 const SCENE_DOCUMENT_SCHEMA: &str = include_str!("../../../schemas/scene-document.schema.json");
 const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_GEMINI_FALLBACK_MODEL: &str = "gemini-2.5-flash-lite";
+const DEFAULT_GEMMA_FALLBACK_MODEL: &str = "gemma-4-31b-it";
 
 pub const DEFAULT_PROVIDER_ENV_VAR: &str = "TWEAKY_AI_PROVIDER";
 pub const DEFAULT_MODEL_ENV_VAR: &str = "TWEAKY_AI_MODEL";
@@ -2592,7 +2593,10 @@ fn stage_param_guide() -> &'static str {
 
 fn default_fallback_models(provider: ProviderKind) -> Vec<String> {
     match provider {
-        ProviderKind::Gemini => vec![DEFAULT_GEMINI_FALLBACK_MODEL.to_string()],
+        ProviderKind::Gemini => vec![
+            DEFAULT_GEMINI_FALLBACK_MODEL.to_string(),
+            DEFAULT_GEMMA_FALLBACK_MODEL.to_string(),
+        ],
         ProviderKind::Mock | ProviderKind::OpenAiCompatible => Vec::new(),
     }
 }
@@ -2774,9 +2778,9 @@ struct GeminiErrorPayload {
 mod tests {
     use super::{
         AiAdapterError, BASIC_POSTER, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL,
-        GeneratedScene, ProviderConfig, ProviderKind, ResponseMode, ScenePlan, ScenePlanCanvas,
-        ScenePlanHierarchyNode, ScenePlanNode, SceneTemplateKind, StageKind, StageSpec,
-        can_finalize_staged_scene, gemini_endpoint, gemini_model_attempts,
+        DEFAULT_GEMMA_FALLBACK_MODEL, GeneratedScene, ProviderConfig, ProviderKind, ResponseMode,
+        ScenePlan, ScenePlanCanvas, ScenePlanHierarchyNode, ScenePlanNode, SceneTemplateKind,
+        StageKind, StageSpec, can_finalize_staged_scene, gemini_endpoint, gemini_model_attempts,
         gemini_plan_to_scene_prompt, gemini_user_prompt, generate_scene_from_prompt_with_config,
         parse_ai_scene_response, scene_plan_schema,
     };
@@ -2834,7 +2838,10 @@ mod tests {
         assert_eq!(gemini.model, "gemini-2.5-flash");
         assert_eq!(
             gemini.fallback_models,
-            vec![DEFAULT_GEMINI_FALLBACK_MODEL.to_string()]
+            vec![
+                DEFAULT_GEMINI_FALLBACK_MODEL.to_string(),
+                DEFAULT_GEMMA_FALLBACK_MODEL.to_string()
+            ]
         );
         assert_eq!(gemini.api_key_env_var.as_deref(), Some("GEMINI_API_KEY"));
     }
@@ -2876,12 +2883,15 @@ mod tests {
             .with_fallback_models(vec![
                 "gemini-2.5-flash-lite".to_string(),
                 "gemini-2.5-flash-lite".to_string(),
+                "gemma-4-31b-it".to_string(),
+                "gemma-4-31b-it".to_string(),
             ]);
         assert_eq!(
             gemini_model_attempts(&config),
             vec![
                 "gemini-2.5-flash".to_string(),
-                "gemini-2.5-flash-lite".to_string()
+                "gemini-2.5-flash-lite".to_string(),
+                "gemma-4-31b-it".to_string()
             ]
         );
 
