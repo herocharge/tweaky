@@ -4,7 +4,11 @@ use scene_schema::{SceneFile, ValidationIssue, parse_scene_str, validate_scene};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt;
+use std::fs;
+use std::path::Path;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const PELICAN_BICYCLE: &str = include_str!("../../../examples/pelican_bicycle.vsd.json");
 const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
@@ -18,6 +22,9 @@ pub const DEFAULT_MODEL_ENV_VAR: &str = "TWEAKY_AI_MODEL";
 pub const DEFAULT_API_KEY_ENV_VAR: &str = "TWEAKY_AI_API_KEY_ENV";
 pub const DEFAULT_BASE_URL_ENV_VAR: &str = "TWEAKY_AI_BASE_URL";
 pub const DEFAULT_FALLBACK_MODELS_ENV_VAR: &str = "TWEAKY_AI_FALLBACK_MODELS";
+pub const DEFAULT_TRACE_DIR_ENV_VAR: &str = "TWEAKY_AI_TRACE_DIR";
+
+static TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -671,7 +678,7 @@ fn request_gemini_scene_plan(
         },
     };
 
-    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    let json_text = send_gemini_request(config, api_key, model, "plan", endpoint, &request)?;
     serde_json::from_str::<ScenePlan>(&json_text)
         .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
 }
@@ -707,7 +714,14 @@ fn request_gemini_scene_from_plan(
         },
     };
 
-    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    let json_text = send_gemini_request(
+        config,
+        api_key,
+        model,
+        "scene_from_plan",
+        endpoint,
+        &request,
+    )?;
     parse_ai_scene_response(&json_text)
 }
 
@@ -737,7 +751,7 @@ fn request_gemini_scene_critique(
         },
     };
 
-    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    let json_text = send_gemini_request(config, api_key, model, "critique", endpoint, &request)?;
     serde_json::from_str::<SceneCritique>(&json_text)
         .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
 }
@@ -769,7 +783,7 @@ fn request_gemini_scene_revision(
         },
     };
 
-    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    let json_text = send_gemini_request(config, api_key, model, "revision", endpoint, &request)?;
     parse_ai_scene_response(&json_text)
 }
 
@@ -802,17 +816,22 @@ fn request_gemini_scene(
         },
     };
 
-    let json_text = send_gemini_request(config, api_key, model, endpoint, &request)?;
+    let json_text = send_gemini_request(config, api_key, model, "scene_direct", endpoint, &request)?;
     parse_ai_scene_response(&json_text)
 }
 
 fn send_gemini_request(
-    _config: &ProviderConfig,
+    config: &ProviderConfig,
     api_key: &str,
     model: &str,
+    phase: &str,
     endpoint: String,
     request: &GeminiGenerateContentRequest,
 ) -> Result<String, AiAdapterError> {
+    let request_trace = sanitize_trace_value(
+        serde_json::to_value(request)
+            .unwrap_or_else(|_| serde_json::json!({ "trace_error": "failed to serialize request" })),
+    );
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -823,26 +842,86 @@ fn send_gemini_request(
         .header("x-goog-api-key", api_key)
         .json(&request)
         .send()
-        .map_err(|error| AiAdapterError::HttpFailed(error.to_string()))?;
+        .map_err(|error| {
+            write_trace_bundle(
+                config,
+                phase,
+                model,
+                &request_trace,
+                None,
+                Some(&format!("HTTP request failed: {error}")),
+            );
+            AiAdapterError::HttpFailed(error.to_string())
+        })?;
 
     let status = http_response.status();
-    let response: GeminiGenerateContentResponse = http_response
-        .json()
-        .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))?;
+    let response_text = http_response
+        .text()
+        .map_err(|error| {
+            write_trace_bundle(
+                config,
+                phase,
+                model,
+                &request_trace,
+                None,
+                Some(&format!("failed to read response body: {error}")),
+            );
+            AiAdapterError::ParseFailed(error.to_string())
+        })?;
+    let response_trace = sanitize_trace_value(
+        serde_json::from_str::<serde_json::Value>(&response_text)
+            .unwrap_or_else(|_| serde_json::json!({ "raw_text": response_text.clone() })),
+    );
+    let response: GeminiGenerateContentResponse =
+        serde_json::from_str(&response_text).map_err(|error| {
+            write_trace_bundle(
+                config,
+                phase,
+                model,
+                &request_trace,
+                Some(&response_trace),
+                Some(&format!("failed to parse Gemini response envelope: {error}")),
+            );
+            AiAdapterError::ParseFailed(error.to_string())
+        })?;
 
     if !status.is_success() {
         if let Some(error) = response.error {
+            write_trace_bundle(
+                config,
+                phase,
+                model,
+                &request_trace,
+                Some(&response_trace),
+                Some(&format!("provider error: {} ({})", error.message, error.status)),
+            );
             return Err(AiAdapterError::ApiResponseFailed(format!(
                 "{} ({}) via {}",
                 error.message, error.status, model
             )));
         }
+        write_trace_bundle(
+            config,
+            phase,
+            model,
+            &request_trace,
+            Some(&response_trace),
+            Some(&format!("provider returned HTTP status {status}")),
+        );
         return Err(AiAdapterError::ApiResponseFailed(format!(
             "Gemini returned HTTP status {status} via {model}"
         )));
     }
 
     if let Some(error) = response.error {
+        write_trace_bundle(
+            config,
+            phase,
+            model,
+            &request_trace,
+            Some(&response_trace),
+            Some(&format!("provider error: {} ({})", error.message, error.status)),
+        );
         return Err(AiAdapterError::ApiResponseFailed(format!(
             "{} ({}) via {}",
             error.message, error.status, model
@@ -866,12 +945,99 @@ fn send_gemini_request(
             }
         })
         .ok_or_else(|| {
+            write_trace_bundle(
+                config,
+                phase,
+                model,
+                &request_trace,
+                Some(&response_trace),
+                Some("Gemini response did not include any JSON text parts"),
+            );
             AiAdapterError::ApiResponseFailed(
                 format!("Gemini response did not include any JSON text parts via {model}"),
             )
         })?;
 
+    write_trace_bundle(
+        config,
+        phase,
+        model,
+        &request_trace,
+        Some(&response_trace),
+        None,
+    );
     Ok(json_text)
+}
+
+fn write_trace_bundle(
+    config: &ProviderConfig,
+    phase: &str,
+    model: &str,
+    request: &serde_json::Value,
+    response: Option<&serde_json::Value>,
+    error: Option<&str>,
+) {
+    let Some(trace_dir) = env::var(DEFAULT_TRACE_DIR_ENV_VAR)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return;
+    };
+
+    let counter = TRACE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let payload = serde_json::json!({
+        "phase": phase,
+        "provider": format!("{}", config.provider),
+        "model": model,
+        "timestamp_ms": timestamp_ms,
+        "request": request,
+        "response": response.cloned(),
+        "error": error,
+    });
+
+    let path = Path::new(&trace_dir);
+    if fs::create_dir_all(path).is_err() {
+        return;
+    }
+
+    let filename = format!("{timestamp_ms:013}_{counter:04}_{phase}_{model}.json");
+    let output_path = path.join(filename);
+    let _ = fs::write(
+        output_path,
+        serde_json::to_string_pretty(&payload)
+            .unwrap_or_else(|_| "{\"trace_error\":\"failed to serialize trace payload\"}\n".to_string()),
+    );
+}
+
+fn sanitize_trace_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(mut map) => {
+            if let Some(inline_data) = map.get_mut("inlineData")
+                && let Some(inline_map) = inline_data.as_object_mut()
+            {
+                if let Some(data) = inline_map.get("data").and_then(|value| value.as_str()) {
+                    inline_map.insert(
+                        "data".to_string(),
+                        serde_json::Value::String(format!("<base64:{} bytes>", data.len())),
+                    );
+                }
+            }
+
+            let sanitized = map
+                .into_iter()
+                .map(|(key, value)| (key, sanitize_trace_value(value)))
+                .collect();
+            serde_json::Value::Object(sanitized)
+        }
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items.into_iter().map(sanitize_trace_value).collect(),
+        ),
+        other => other,
+    }
 }
 
 fn parse_ai_scene_response(json_text: &str) -> Result<AiSceneResponse, AiAdapterError> {
