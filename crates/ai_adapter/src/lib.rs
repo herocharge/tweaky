@@ -610,7 +610,6 @@ fn generate_gemini_scene_with_fallback(
     api_key: &str,
     prompt: &str,
 ) -> Result<GeneratedScene, AiAdapterError> {
-    let mut last_error = None;
     let template_kind = template_for_prompt(prompt);
     let template_scene = template_scene_json(template_kind);
 
@@ -620,113 +619,9 @@ fn generate_gemini_scene_with_fallback(
         return Ok(generated);
     }
 
-    for model in gemini_model_attempts(config) {
-        let mut repair_feedback = None;
-        let plan = match request_gemini_scene_plan(
-            config,
-            api_key,
-            prompt,
-            template_kind,
-            template_scene,
-            &model,
-        ) {
-            Ok(plan) => Some(plan),
-            Err(error) if is_retryable_gemini_error(&error) => {
-                last_error = Some(error);
-                None
-            }
-            Err(error) => return Err(error),
-        };
-
-        for _ in 0..2 {
-            let scene_attempt = match &plan {
-                Some(plan) => request_gemini_scene_from_plan(
-                    config,
-                    api_key,
-                    prompt,
-                    template_kind,
-                    template_scene,
-                    plan,
-                    &model,
-                    repair_feedback.as_deref(),
-                ),
-                None => request_gemini_scene(
-                    config,
-                    api_key,
-                    prompt,
-                    template_kind,
-                    template_scene,
-                    &model,
-                    repair_feedback.as_deref(),
-                ),
-            };
-
-            match scene_attempt {
-                Ok(response) => {
-                    let scene = response.document.clone();
-                    match validate_generated_response(response) {
-                        Ok(generated) => {
-                            let scene = generated.response.document.clone().expect("document");
-                            match critique_and_maybe_revise_scene(
-                                config, api_key, prompt, &scene, &model,
-                            ) {
-                                Ok(Some(revised_generated)) => return Ok(revised_generated),
-                                Ok(None) => return Ok(generated),
-                                Err(error) if is_retryable_gemini_error(&error) => {
-                                    last_error = Some(error);
-                                    break;
-                                }
-                                Err(error) => return Err(error),
-                            }
-                        }
-                        Err(error @ AiAdapterError::InvalidDocument(_)) if scene.is_some() => {
-                            let scene = scene.expect("scene should exist");
-                            match critique_and_maybe_revise_scene(
-                                config, api_key, prompt, &scene, &model,
-                            ) {
-                                Ok(Some(revised_generated)) => return Ok(revised_generated),
-                                Ok(None) => {
-                                    last_error = Some(error);
-                                    break;
-                                }
-                                Err(revision_error)
-                                    if is_retryable_gemini_error(&revision_error) =>
-                                {
-                                    last_error = Some(revision_error);
-                                    break;
-                                }
-                                Err(revision_error) => return Err(revision_error),
-                            }
-                        }
-                        Err(error)
-                            if should_retry_same_model_with_feedback(&error, &repair_feedback) =>
-                        {
-                            repair_feedback = Some(build_repair_feedback(&error));
-                            last_error = Some(error);
-                        }
-                        Err(error) if is_retryable_gemini_error(&error) => {
-                            last_error = Some(error);
-                            break;
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-                Err(error) if should_retry_same_model_with_feedback(&error, &repair_feedback) => {
-                    repair_feedback = Some(build_repair_feedback(&error));
-                    last_error = Some(error);
-                }
-                Err(error) if is_retryable_gemini_error(&error) => {
-                    last_error = Some(error);
-                    break;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| {
-        AiAdapterError::ApiResponseFailed("Gemini fallback chain exhausted".to_string())
-    }))
+    Err(AiAdapterError::ApiResponseFailed(
+        "Staged slot generation exhausted every configured model".to_string(),
+    ))
 }
 
 fn try_staged_template_generation(
