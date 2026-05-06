@@ -1,6 +1,9 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use scene_schema::{SceneFile, SceneNode, ValidationIssue, parse_scene_str, validate_scene};
+use scene_schema::{
+    BlendMode, JsonObject, SceneFile, SceneNode, Transform, ValidationIssue, parse_scene_str,
+    validate_scene,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -60,6 +63,8 @@ pub struct ScenePlan {
     pub style_keywords: Vec<String>,
     pub major_nodes: Vec<ScenePlanNode>,
     pub composition_notes: Vec<String>,
+    #[serde(default = "default_plan_hierarchy_root")]
+    pub hierarchy: ScenePlanHierarchyNode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -74,6 +79,18 @@ pub struct ScenePlanNode {
     pub id: String,
     pub node_type: String,
     pub purpose: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScenePlanHierarchyNode {
+    pub id: String,
+    pub role: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub purpose: Option<String>,
+    #[serde(default)]
+    pub children: Vec<ScenePlanHierarchyNode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -575,6 +592,16 @@ fn normalize_prompt(prompt: &str) -> String {
         .collect::<String>()
 }
 
+fn default_plan_hierarchy_root() -> ScenePlanHierarchyNode {
+    ScenePlanHierarchyNode {
+        id: "root".to_string(),
+        role: "group".to_string(),
+        label: Some("Root".to_string()),
+        purpose: Some("Top-level scene hierarchy root".to_string()),
+        children: Vec::new(),
+    }
+}
+
 fn generate_gemini_scene_with_fallback(
     config: &ProviderConfig,
     api_key: &str,
@@ -727,6 +754,7 @@ fn try_staged_template_generation(
         let mut working_scene = scaffold.clone();
         let mut completed_stages = Vec::new();
         apply_plan_canvas_to_scene(&mut working_scene, &plan);
+        materialize_plan_hierarchy(&mut working_scene, &plan);
         let stages = derive_stages_from_plan(&plan);
         let mut stage_failed = false;
 
@@ -747,10 +775,18 @@ fn try_staged_template_generation(
                     repair_feedback.as_deref(),
                 ) {
                     Ok(stage_response) => {
-                        match validate_stage_children(&working_scene, &stage_response.children) {
+                        match validate_stage_children(
+                            &working_scene,
+                            &stage_response.children,
+                            Some(stage.slot_id.as_str()),
+                        ) {
                             Ok(()) => {
                                 let mut candidate_scene = working_scene.clone();
-                                merge_stage_children(&mut candidate_scene, stage_response.children);
+                                merge_stage_children(
+                                    &mut candidate_scene,
+                                    stage_response.children,
+                                    Some(stage.slot_id.as_str()),
+                                );
                                 best_effort_candidate = Some(candidate_scene.clone());
                                 match critique_stage_and_maybe_request_retry(
                                     config,
@@ -871,6 +907,63 @@ fn build_poster_scaffold_scene(template_scene: &str) -> Result<SceneFile, AiAdap
     Ok(scene)
 }
 
+fn materialize_plan_hierarchy(scene: &mut SceneFile, plan: &ScenePlan) {
+    let hierarchy = normalized_plan_hierarchy(plan);
+    scene
+        .document
+        .root
+        .children
+        .retain(|child| child.id == "bg_rect");
+    for child in &hierarchy.children {
+        scene
+            .document
+            .root
+            .children
+            .push(plan_hierarchy_node_to_scene_group(child));
+    }
+}
+
+fn plan_hierarchy_node_to_scene_group(node: &ScenePlanHierarchyNode) -> SceneNode {
+    let mut meta = JsonObject::new();
+    meta.insert(
+        "planRole".to_string(),
+        serde_json::Value::String(node.role.clone()),
+    );
+
+    SceneNode {
+        id: node.id.clone(),
+        node_type: scene_schema::NodeType::Group,
+        name: node
+            .label
+            .clone()
+            .or_else(|| node.purpose.clone())
+            .unwrap_or_else(|| node.id.clone()),
+        visible: true,
+        locked: false,
+        blend_mode: BlendMode::Normal,
+        transform: default_node_transform(),
+        params: JsonObject::new(),
+        style: JsonObject::new(),
+        children: node
+            .children
+            .iter()
+            .map(plan_hierarchy_node_to_scene_group)
+            .collect(),
+        meta,
+    }
+}
+
+fn default_node_transform() -> Transform {
+    Transform {
+        x: 0.0,
+        y: 0.0,
+        scale_x: 1.0,
+        scale_y: 1.0,
+        rotation: 0.0,
+        opacity: 1.0,
+    }
+}
+
 fn finalize_staged_scene(
     prompt: &str,
     scene: &SceneFile,
@@ -930,79 +1023,32 @@ enum StageKind {
 struct StageSpec {
     kind: StageKind,
     id: String,
+    slot_id: String,
     purpose: String,
     target_node_ids: Vec<String>,
     composition_hints: Vec<String>,
 }
 
 fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
-    let mut support_nodes = Vec::new();
-    let mut subject_nodes = Vec::new();
-    let mut text_nodes = Vec::new();
-
-    for node in &plan.major_nodes {
-        let node_type = node.node_type.to_lowercase();
-        let descriptor = format!("{} {}", node.id.to_lowercase(), node.purpose.to_lowercase());
-
-        if node_type == "text"
-            || descriptor.contains("headline")
-            || descriptor.contains("title")
-            || descriptor.contains("caption")
-            || descriptor.contains("tagline")
-        {
-            text_nodes.push(node.clone());
-        } else if descriptor.contains("background")
-            || descriptor.contains("ground")
-            || descriptor.contains("panel")
-            || descriptor.contains("backdrop")
-            || descriptor.contains("sky")
-            || descriptor.contains("support")
-            || descriptor.contains("shadow")
-        {
-            support_nodes.push(node.clone());
-        } else {
-            subject_nodes.push(node.clone());
-        }
-    }
-
+    let major_node_lookup = plan
+        .major_nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let hierarchy = normalized_plan_hierarchy(plan);
     let mut stages = Vec::new();
-    if !support_nodes.is_empty() {
-        stages.push(stage_from_nodes(
-            StageKind::Support,
-            "support",
-            "Add support, background, or grounding nodes that establish the scene.",
-            &support_nodes,
-            &plan.composition_notes,
-        ));
-    }
-
-    for node in subject_nodes {
-        stages.push(stage_from_nodes(
-            StageKind::Subject,
-            &slugify(&node.id),
-            &format!(
-                "Add the editable scene nodes for '{}'. {}",
-                node.id, node.purpose
-            ),
-            &[node],
-            &plan.composition_notes,
-        ));
-    }
-
-    if !text_nodes.is_empty() {
-        stages.push(stage_from_nodes(
-            StageKind::Text,
-            "text",
-            "Add the text or caption nodes that complete the composition.",
-            &text_nodes,
-            &plan.composition_notes,
-        ));
-    }
+    collect_stages_from_hierarchy(
+        &hierarchy,
+        &major_node_lookup,
+        &plan.composition_notes,
+        &mut stages,
+    );
 
     if stages.is_empty() {
         stages.push(StageSpec {
             kind: StageKind::Subject,
             id: "primary_subject".to_string(),
+            slot_id: "root".to_string(),
             purpose: format!(
                 "Add the main editable subject nodes needed to realize this planned scene: {}",
                 plan.summary
@@ -1019,19 +1065,139 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
     stages
 }
 
-fn stage_from_nodes(
-    kind: StageKind,
-    id: &str,
-    purpose: &str,
-    nodes: &[ScenePlanNode],
+fn normalized_plan_hierarchy(plan: &ScenePlan) -> ScenePlanHierarchyNode {
+    if !plan.hierarchy.children.is_empty() {
+        return plan.hierarchy.clone();
+    }
+
+    let mut root = default_plan_hierarchy_root();
+    let mut support = ScenePlanHierarchyNode {
+        id: "support_layer".to_string(),
+        role: "group".to_string(),
+        label: Some("Support Layer".to_string()),
+        purpose: Some("Background and grounding elements".to_string()),
+        children: Vec::new(),
+    };
+    let mut subject = ScenePlanHierarchyNode {
+        id: "subject_layer".to_string(),
+        role: "group".to_string(),
+        label: Some("Subject Layer".to_string()),
+        purpose: Some("Primary editable scene subjects".to_string()),
+        children: Vec::new(),
+    };
+    let mut text = ScenePlanHierarchyNode {
+        id: "text_layer".to_string(),
+        role: "group".to_string(),
+        label: Some("Text Layer".to_string()),
+        purpose: Some("Text and caption elements".to_string()),
+        children: Vec::new(),
+    };
+
+    for node in &plan.major_nodes {
+        let kind = classify_stage_kind(&node.id, &node.node_type, &node.purpose, &[]);
+        let slot = ScenePlanHierarchyNode {
+            id: node.id.clone(),
+            role: "slot".to_string(),
+            label: Some(node.id.clone()),
+            purpose: Some(node.purpose.clone()),
+            children: Vec::new(),
+        };
+        match kind {
+            StageKind::Support => support.children.push(slot),
+            StageKind::Subject => subject.children.push(slot),
+            StageKind::Text => text.children.push(slot),
+        }
+    }
+
+    if !support.children.is_empty() {
+        root.children.push(support);
+    }
+    if !subject.children.is_empty() {
+        root.children.push(subject);
+    }
+    if !text.children.is_empty() {
+        root.children.push(text);
+    }
+
+    root
+}
+
+fn collect_stages_from_hierarchy(
+    node: &ScenePlanHierarchyNode,
+    major_nodes: &HashMap<&str, &ScenePlanNode>,
     composition_notes: &[String],
-) -> StageSpec {
-    StageSpec {
-        kind,
-        id: id.to_string(),
-        purpose: purpose.to_string(),
-        target_node_ids: nodes.iter().map(|node| node.id.clone()).collect(),
-        composition_hints: composition_notes.iter().take(3).cloned().collect(),
+    stages: &mut Vec<StageSpec>,
+) {
+    if node.role.eq_ignore_ascii_case("slot") {
+        let major_node = major_nodes.get(node.id.as_str()).copied();
+        let node_type = major_node
+            .map(|entry| entry.node_type.as_str())
+            .unwrap_or("Group");
+        let purpose = node
+            .purpose
+            .clone()
+            .or_else(|| major_node.map(|entry| entry.purpose.clone()))
+            .unwrap_or_else(|| format!("Fill slot '{}'", node.id));
+        let target_node_ids = vec![node.id.clone()];
+        let kind = classify_stage_kind(
+            &node.id,
+            node_type,
+            &purpose,
+            &[node.label.clone().unwrap_or_default()],
+        );
+        stages.push(StageSpec {
+            kind,
+            id: slugify(&node.id),
+            slot_id: node.id.clone(),
+            purpose: format!("Fill the planned slot '{}'. {}", node.id, purpose),
+            target_node_ids,
+            composition_hints: composition_notes.iter().take(3).cloned().collect(),
+        });
+        return;
+    }
+
+    for child in &node.children {
+        collect_stages_from_hierarchy(child, major_nodes, composition_notes, stages);
+    }
+}
+
+fn classify_stage_kind(
+    id: &str,
+    node_type: &str,
+    purpose: &str,
+    extra_descriptors: &[String],
+) -> StageKind {
+    let descriptor = format!(
+        "{} {} {}",
+        id.to_lowercase(),
+        node_type.to_lowercase(),
+        purpose.to_lowercase()
+    );
+    let extras = extra_descriptors
+        .iter()
+        .map(|value| value.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let descriptor = format!("{descriptor} {extras}");
+
+    if descriptor.contains("text")
+        || descriptor.contains("headline")
+        || descriptor.contains("title")
+        || descriptor.contains("caption")
+        || descriptor.contains("tagline")
+    {
+        StageKind::Text
+    } else if descriptor.contains("background")
+        || descriptor.contains("ground")
+        || descriptor.contains("panel")
+        || descriptor.contains("backdrop")
+        || descriptor.contains("sky")
+        || descriptor.contains("support")
+        || descriptor.contains("shadow")
+    {
+        StageKind::Support
+    } else {
+        StageKind::Subject
     }
 }
 
@@ -1111,13 +1277,18 @@ fn request_stage_nodes(
         .map_err(|error| AiAdapterError::ParseFailed(error.to_string()))
 }
 
-fn merge_stage_children(scene: &mut SceneFile, children: Vec<SceneNode>) {
-    let _ = apply_stage_children_to_scene(scene, children);
+fn merge_stage_children(
+    scene: &mut SceneFile,
+    children: Vec<SceneNode>,
+    default_parent_id: Option<&str>,
+) {
+    let _ = apply_stage_children_to_scene(scene, children, default_parent_id);
 }
 
 fn validate_stage_children(
     scene: &SceneFile,
     children: &[SceneNode],
+    default_parent_id: Option<&str>,
 ) -> Result<(), AiAdapterError> {
     if children.is_empty() {
         return Err(AiAdapterError::InvalidDocument(vec![ValidationIssue {
@@ -1141,6 +1312,7 @@ fn validate_stage_children(
     issues.extend(apply_stage_children_to_scene(
         &mut candidate,
         children.to_vec(),
+        default_parent_id,
     ));
     issues.extend(validate_scene(&candidate));
 
@@ -1242,6 +1414,7 @@ fn clear_stage_parent_meta(node: &mut SceneNode) {
 fn apply_stage_children_to_scene(
     scene: &mut SceneFile,
     children: Vec<SceneNode>,
+    default_parent_id: Option<&str>,
 ) -> Vec<ValidationIssue> {
     let mut pending = children;
     let mut issues = Vec::new();
@@ -1269,8 +1442,17 @@ fn apply_stage_children_to_scene(
                     next_pending.push(unresolved);
                 }
             } else {
-                scene.document.root.children.push(node);
-                progressed = true;
+                let inserted = if let Some(parent_id) = default_parent_id {
+                    insert_node_under_parent(&mut scene.document.root, parent_id, node.clone())
+                } else {
+                    scene.document.root.children.push(node.clone());
+                    true
+                };
+                if inserted {
+                    progressed = true;
+                } else {
+                    next_pending.push(node);
+                }
             }
         }
 
@@ -1281,13 +1463,24 @@ fn apply_stage_children_to_scene(
     }
 
     for node in pending {
-        issues.push(ValidationIssue {
-            path: format!("stage.children.{}.meta.parent", node.id),
-            message: format!(
-                "could not resolve parent reference {:?} while stitching stage output",
-                stage_parent_id(&node)
-            ),
-        });
+        let path = format!("stage.children.{}", node.id);
+        if let Some(parent_id) = stage_parent_id(&node) {
+            issues.push(ValidationIssue {
+                path: format!("{path}.meta.parent"),
+                message: format!(
+                    "could not resolve parent reference '{}' while stitching stage output",
+                    parent_id
+                ),
+            });
+        } else if let Some(parent_id) = default_parent_id {
+            issues.push(ValidationIssue {
+                path,
+                message: format!(
+                    "could not resolve default slot target '{}' while stitching stage output",
+                    parent_id
+                ),
+            });
+        }
     }
 
     issues
@@ -1994,6 +2187,9 @@ fn gemini_plan_user_prompt(
             "Requirements:\n",
             "- choose a concrete canvas size and background color\n",
             "- list the major editable nodes needed to draw the scene\n",
+            "- provide a hierarchy tree rooted at id 'root' with role 'group'\n",
+            "- use role 'group' for container layers and role 'slot' for leaf insertion targets\n",
+            "- make each major editable object correspond to a leaf slot id in the hierarchy\n",
             "- make the scene funny and compositionally clear\n",
             "- prefer native structured nodes over raster fallback when possible\n"
         ),
@@ -2029,12 +2225,13 @@ fn gemini_stage_user_prompt(
             "Current working scene JSON:\n{}\n\n",
             "Overall plan summary: {}\n\n",
             "Current stage id: {}\n",
+            "Target slot id: {}\n",
             "Stage purpose: {}\n\n",
             "Target node ids for this stage: {}\n",
             "Relevant composition hints:\n{}\n\n",
             "Instructions:\n",
             "- return only the new child nodes needed for this stage\n",
-            "- assume these nodes will be appended under the root group\n",
+            "- assume these nodes will be inserted under the target slot group automatically\n",
             "- respect the existing composition and avoid duplicating existing nodes\n",
             "- make the result editable and structurally clear\n",
             "- use multiple nodes when that helps readability\n",
@@ -2043,7 +2240,7 @@ fn gemini_stage_user_prompt(
             "- Path params use points: [{{\"x\":..,\"y\":..}}] and optional closed, not SVG path data\n",
             "- Text params use text, fontSize, optional fontFamily, and optional lineHeight\n",
             "- Rectangle params use width, height, optional cornerRadius\n",
-            "- Group nodes must include non-empty children, or sibling nodes must set meta.parent to that group's id so they can be stitched under it\n",
+            "- Group nodes must include non-empty children; use meta.parent only when you need to attach a sibling node under another node returned in the same stage\n",
             "- Keep the output focused on this stage's target node ids and avoid duplicating nodes from other stages\n\n",
             "Quick param guide:\n{}\n",
             "{}"
@@ -2052,6 +2249,7 @@ fn gemini_stage_user_prompt(
         serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string()),
         plan.summary,
         stage.id,
+        stage.slot_id,
         stage.purpose,
         stage.target_node_ids.join(", "),
         stage.composition_hints.join("\n"),
@@ -2186,6 +2384,7 @@ fn gemini_stage_critique_user_prompt(
             "User prompt:\n{}\n\n",
             "Overall plan summary:\n{}\n\n",
             "Current stage id: {}\n",
+            "Target slot id: {}\n",
             "Stage purpose: {}\n",
             "Target node ids: {}\n",
             "Relevant composition hints:\n{}\n\n",
@@ -2198,6 +2397,7 @@ fn gemini_stage_critique_user_prompt(
         prompt,
         plan.summary,
         stage.id,
+        stage.slot_id,
         stage.purpose,
         stage.target_node_ids.join(", "),
         stage.composition_hints.join("\n"),
@@ -2255,6 +2455,22 @@ fn response_envelope_schema() -> serde_json::Value {
 fn scene_plan_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
+        "$defs": {
+            "hierarchy_node": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "role": { "type": "string", "enum": ["group", "slot"] },
+                    "label": { "type": "string" },
+                    "purpose": { "type": "string" },
+                    "children": {
+                        "type": "array",
+                        "items": { "$ref": "#/$defs/hierarchy_node" }
+                    }
+                },
+                "required": ["id", "role", "children"]
+            }
+        },
         "properties": {
             "summary": { "type": "string" },
             "canvas": {
@@ -2285,9 +2501,12 @@ fn scene_plan_schema() -> serde_json::Value {
             "composition_notes": {
                 "type": "array",
                 "items": { "type": "string" }
+            },
+            "hierarchy": {
+                "$ref": "#/$defs/hierarchy_node"
             }
         },
-        "required": ["summary", "canvas", "style_keywords", "major_nodes", "composition_notes"]
+        "required": ["summary", "canvas", "style_keywords", "major_nodes", "composition_notes", "hierarchy"]
     })
 }
 
@@ -2556,9 +2775,10 @@ mod tests {
     use super::{
         AiAdapterError, BASIC_POSTER, DEFAULT_GEMINI_BASE_URL, DEFAULT_GEMINI_FALLBACK_MODEL,
         GeneratedScene, ProviderConfig, ProviderKind, ResponseMode, ScenePlan, ScenePlanCanvas,
-        ScenePlanNode, SceneTemplateKind, StageKind, StageSpec, can_finalize_staged_scene,
-        gemini_endpoint, gemini_model_attempts, gemini_plan_to_scene_prompt, gemini_user_prompt,
-        generate_scene_from_prompt_with_config, parse_ai_scene_response, scene_plan_schema,
+        ScenePlanHierarchyNode, ScenePlanNode, SceneTemplateKind, StageKind, StageSpec,
+        can_finalize_staged_scene, gemini_endpoint, gemini_model_attempts,
+        gemini_plan_to_scene_prompt, gemini_user_prompt, generate_scene_from_prompt_with_config,
+        parse_ai_scene_response, scene_plan_schema,
     };
     use std::env;
     use std::sync::{Mutex, OnceLock};
@@ -2697,6 +2917,7 @@ mod tests {
         let support_only = vec![StageSpec {
             kind: StageKind::Support,
             id: "support".to_string(),
+            slot_id: "support".to_string(),
             purpose: "support".to_string(),
             target_node_ids: vec!["ground".to_string()],
             composition_hints: vec![],
@@ -2708,6 +2929,7 @@ mod tests {
             StageSpec {
                 kind: StageKind::Subject,
                 id: "pelican".to_string(),
+                slot_id: "pelican".to_string(),
                 purpose: "subject".to_string(),
                 target_node_ids: vec!["pelican".to_string()],
                 composition_hints: vec![],
@@ -2793,6 +3015,19 @@ mod tests {
                 purpose: "Main pelican body mass".to_string(),
             }],
             composition_notes: vec!["Center the bicycle".to_string()],
+            hierarchy: ScenePlanHierarchyNode {
+                id: "root".to_string(),
+                role: "group".to_string(),
+                label: Some("Root".to_string()),
+                purpose: Some("Scene root".to_string()),
+                children: vec![ScenePlanHierarchyNode {
+                    id: "pelican_body".to_string(),
+                    role: "slot".to_string(),
+                    label: Some("Pelican Slot".to_string()),
+                    purpose: Some("Main pelican body mass".to_string()),
+                    children: vec![],
+                }],
+            },
         };
 
         let prompt = gemini_plan_to_scene_prompt(
@@ -2816,5 +3051,6 @@ mod tests {
             .expect("required should be an array");
         assert!(required.iter().any(|value| value == "summary"));
         assert!(required.iter().any(|value| value == "major_nodes"));
+        assert!(required.iter().any(|value| value == "hierarchy"));
     }
 }
