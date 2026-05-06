@@ -1072,7 +1072,18 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
         });
     }
 
+    stages.sort_by_key(stage_priority_key);
     stages
+}
+
+fn stage_priority_key(stage: &StageSpec) -> (u8, String) {
+    let tier = match stage.kind {
+        StageKind::Subject => 0,
+        StageKind::Assembly => 1,
+        StageKind::Text => 2,
+        StageKind::Support => 3,
+    };
+    (tier, stage.id.clone())
 }
 
 fn normalized_plan_hierarchy(plan: &ScenePlan) -> ScenePlanHierarchyNode {
@@ -3402,6 +3413,87 @@ mod tests {
                 .iter()
                 .any(|stage| matches!(stage.kind, StageKind::Assembly))
         );
+    }
+
+    #[test]
+    fn derive_stages_prioritizes_subjects_before_support() {
+        let plan = ScenePlan {
+            summary: "Pelican on bike".to_string(),
+            canvas: ScenePlanCanvas {
+                width: 1200.0,
+                height: 900.0,
+                background: "#f7f1df".to_string(),
+            },
+            style_keywords: vec!["playful".to_string()],
+            major_nodes: vec![
+                ScenePlanNode {
+                    id: "background_elements".to_string(),
+                    node_type: "Group".to_string(),
+                    purpose: "Decorative background support.".to_string(),
+                },
+                ScenePlanNode {
+                    id: "pelican_body".to_string(),
+                    node_type: "Ellipse".to_string(),
+                    purpose: "Pelican body.".to_string(),
+                },
+                ScenePlanNode {
+                    id: "pelican_beak".to_string(),
+                    node_type: "Path".to_string(),
+                    purpose: "Pelican beak.".to_string(),
+                },
+            ],
+            composition_notes: vec![],
+            hierarchy: ScenePlanHierarchyNode {
+                id: "root".to_string(),
+                role: "group".to_string(),
+                label: Some("Root".to_string()),
+                purpose: Some("Scene root".to_string()),
+                children: vec![
+                    ScenePlanHierarchyNode {
+                        id: "background_group".to_string(),
+                        role: "group".to_string(),
+                        label: Some("Background".to_string()),
+                        purpose: Some("Background support".to_string()),
+                        children: vec![ScenePlanHierarchyNode {
+                            id: "background_elements".to_string(),
+                            role: "slot".to_string(),
+                            label: Some("Background Elements".to_string()),
+                            purpose: Some("Decorative background support.".to_string()),
+                            children: vec![],
+                        }],
+                    },
+                    ScenePlanHierarchyNode {
+                        id: "pelican_group".to_string(),
+                        role: "group".to_string(),
+                        label: Some("Pelican Group".to_string()),
+                        purpose: Some("Grouped pelican subject".to_string()),
+                        children: vec![
+                            ScenePlanHierarchyNode {
+                                id: "pelican_body".to_string(),
+                                role: "slot".to_string(),
+                                label: Some("Body".to_string()),
+                                purpose: Some("Pelican body.".to_string()),
+                                children: vec![],
+                            },
+                            ScenePlanHierarchyNode {
+                                id: "pelican_beak".to_string(),
+                                role: "slot".to_string(),
+                                label: Some("Beak".to_string()),
+                                purpose: Some("Pelican beak.".to_string()),
+                                children: vec![],
+                            },
+                        ],
+                    },
+                ],
+            },
+        };
+
+        let stages = super::derive_stages_from_plan(&plan);
+        let kinds = stages.iter().map(|stage| &stage.kind).collect::<Vec<_>>();
+        assert!(matches!(kinds[0], StageKind::Subject));
+        assert!(matches!(kinds[1], StageKind::Subject));
+        assert!(matches!(kinds[2], StageKind::Assembly));
+        assert!(matches!(kinds[3], StageKind::Support));
     }
 
     #[test]
