@@ -2,13 +2,15 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use scene_schema::{SceneFile, SceneNode, ValidationIssue, parse_scene_str, validate_scene};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const PELICAN_BICYCLE: &str = include_str!("../../../examples/pelican_bicycle.vsd.json");
 const BASIC_POSTER: &str = include_str!("../../../examples/basic_poster.vsd.json");
@@ -25,6 +27,7 @@ pub const DEFAULT_FALLBACK_MODELS_ENV_VAR: &str = "TWEAKY_AI_FALLBACK_MODELS";
 pub const DEFAULT_TRACE_DIR_ENV_VAR: &str = "TWEAKY_AI_TRACE_DIR";
 
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(1);
+static GEMINI_RATE_LIMITER: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -413,7 +416,67 @@ fn validate_generated_scene_quality(scene: &SceneFile) -> Vec<ValidationIssue> {
         });
     }
 
+    if scene.document.root.children.is_empty() {
+        let suspicious_resource_keys = suspicious_resource_keys(scene);
+        if !suspicious_resource_keys.is_empty() {
+            issues.push(ValidationIssue {
+                path: "document.resources".to_string(),
+                message: format!(
+                    concat!(
+                        "generated scene appears to have placed drawable object ids in resources ",
+                        "instead of instantiating scene nodes under document.root.children. ",
+                        "Suspicious resource keys: {:?}"
+                    ),
+                    suspicious_resource_keys
+                ),
+            });
+        }
+    }
+
     issues
+}
+
+fn suspicious_resource_keys(scene: &SceneFile) -> Vec<String> {
+    let mut keys = Vec::new();
+
+    for (key, value) in &scene.document.resources.images {
+        if resource_key_looks_like_scene_node(key, value) {
+            keys.push(format!("images.{key}"));
+        }
+    }
+
+    for (key, value) in &scene.document.resources.fonts {
+        if resource_key_looks_like_scene_node(key, value) {
+            keys.push(format!("fonts.{key}"));
+        }
+    }
+
+    for (key, value) in &scene.document.resources.palettes {
+        if resource_key_looks_like_scene_node(key, value) {
+            keys.push(format!("palettes.{key}"));
+        }
+    }
+
+    keys
+}
+
+fn resource_key_looks_like_scene_node(key: &str, value: &serde_json::Value) -> bool {
+    let normalized = key.to_lowercase();
+    let name_looks_like_node = normalized.contains("pelican")
+        || normalized.contains("bicycle")
+        || normalized.contains("wheel")
+        || normalized.contains("frame")
+        || normalized.contains("head")
+        || normalized.contains("body")
+        || normalized.contains("beak")
+        || normalized.contains("headline")
+        || normalized.contains("tagline");
+
+    if !name_looks_like_node {
+        return false;
+    }
+
+    value.as_object().is_some_and(|object| object.is_empty())
 }
 
 fn mock_response_for_prompt(prompt: &str) -> Result<AiSceneResponse, AiAdapterError> {
@@ -638,16 +701,24 @@ fn try_staged_template_generation(
     if template_kind != SceneTemplateKind::Poster {
         return Ok(None);
     }
-
-    let normalized = normalize_prompt(prompt);
-    if !(normalized.contains("pelican") && normalized.contains("bicycle")) {
-        return Ok(None);
-    }
-
-    let mut scene = build_poster_scaffold_scene(template_scene)?;
-    let stages = poster_generation_stages();
+    let scaffold = build_poster_scaffold_scene(template_scene)?;
     for model in gemini_model_attempts(config) {
-        let mut working_scene = scene.clone();
+        let plan = match request_gemini_scene_plan(
+            config,
+            api_key,
+            prompt,
+            template_kind,
+            template_scene,
+            &model,
+        ) {
+            Ok(plan) => plan,
+            Err(error) if is_retryable_gemini_error(&error) => continue,
+            Err(error) => return Err(error),
+        };
+
+        let mut working_scene = scaffold.clone();
+        apply_plan_canvas_to_scene(&mut working_scene, &plan);
+        let stages = derive_stages_from_plan(&plan);
         let mut stage_failed = false;
 
         for stage in &stages {
@@ -662,6 +733,7 @@ fn try_staged_template_generation(
                     model.as_str(),
                     stage,
                     &working_scene,
+                    &plan,
                     repair_feedback.as_deref(),
                 ) {
                     Ok(stage_response) => {
@@ -722,8 +794,6 @@ fn try_staged_template_generation(
         if let Ok(generated) = validate_generated_response(response) {
             return Ok(Some(generated));
         }
-
-        scene = working_scene;
     }
 
     Ok(None)
@@ -746,31 +816,139 @@ fn build_poster_scaffold_scene(template_scene: &str) -> Result<SceneFile, AiAdap
     Ok(scene)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct StageSpec {
-    id: &'static str,
-    purpose: &'static str,
+    id: String,
+    purpose: String,
+    target_node_ids: Vec<String>,
+    composition_hints: Vec<String>,
 }
 
-fn poster_generation_stages() -> Vec<StageSpec> {
-    vec![
-        StageSpec {
-            id: "ground",
-            purpose: "Add ground, shadow, and any simple background support shapes under the subject.",
-        },
-        StageSpec {
-            id: "bicycle",
-            purpose: "Add the bicycle as editable nodes, ideally a small group with wheels and frame elements.",
-        },
-        StageSpec {
-            id: "pelican",
-            purpose: "Add the pelican riding the bicycle as editable nodes with a recognizable silhouette.",
-        },
-        StageSpec {
-            id: "caption",
-            purpose: "Add any title or caption text that improves the poster composition.",
-        },
-    ]
+fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
+    let mut support_nodes = Vec::new();
+    let mut subject_nodes = Vec::new();
+    let mut text_nodes = Vec::new();
+
+    for node in &plan.major_nodes {
+        let node_type = node.node_type.to_lowercase();
+        let descriptor = format!("{} {}", node.id.to_lowercase(), node.purpose.to_lowercase());
+
+        if node_type == "text"
+            || descriptor.contains("headline")
+            || descriptor.contains("title")
+            || descriptor.contains("caption")
+            || descriptor.contains("tagline")
+        {
+            text_nodes.push(node.clone());
+        } else if descriptor.contains("background")
+            || descriptor.contains("ground")
+            || descriptor.contains("panel")
+            || descriptor.contains("backdrop")
+            || descriptor.contains("sky")
+            || descriptor.contains("support")
+            || descriptor.contains("shadow")
+        {
+            support_nodes.push(node.clone());
+        } else {
+            subject_nodes.push(node.clone());
+        }
+    }
+
+    let mut stages = Vec::new();
+    if !support_nodes.is_empty() {
+        stages.push(stage_from_nodes(
+            "support",
+            "Add support, background, or grounding nodes that establish the scene.",
+            &support_nodes,
+            &plan.composition_notes,
+        ));
+    }
+
+    for node in subject_nodes {
+        stages.push(stage_from_nodes(
+            &slugify(&node.id),
+            &format!(
+                "Add the editable scene nodes for '{}'. {}",
+                node.id, node.purpose
+            ),
+            &[node],
+            &plan.composition_notes,
+        ));
+    }
+
+    if !text_nodes.is_empty() {
+        stages.push(stage_from_nodes(
+            "text",
+            "Add the text or caption nodes that complete the composition.",
+            &text_nodes,
+            &plan.composition_notes,
+        ));
+    }
+
+    if stages.is_empty() {
+        stages.push(StageSpec {
+            id: "primary_subject".to_string(),
+            purpose: format!(
+                "Add the main editable subject nodes needed to realize this planned scene: {}",
+                plan.summary
+            ),
+            target_node_ids: plan
+                .major_nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect(),
+            composition_hints: plan.composition_notes.iter().take(3).cloned().collect(),
+        });
+    }
+
+    stages
+}
+
+fn stage_from_nodes(
+    id: &str,
+    purpose: &str,
+    nodes: &[ScenePlanNode],
+    composition_notes: &[String],
+) -> StageSpec {
+    StageSpec {
+        id: id.to_string(),
+        purpose: purpose.to_string(),
+        target_node_ids: nodes.iter().map(|node| node.id.clone()).collect(),
+        composition_hints: composition_notes.iter().take(3).cloned().collect(),
+    }
+}
+
+fn slugify(value: &str) -> String {
+    let slug = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    slug.split('_')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+fn apply_plan_canvas_to_scene(scene: &mut SceneFile, plan: &ScenePlan) {
+    scene.document.width = plan.canvas.width.max(1.0);
+    scene.document.height = plan.canvas.height.max(1.0);
+    scene.document.background.color = normalize_plan_background(&plan.canvas.background);
+}
+
+fn normalize_plan_background(background: &str) -> String {
+    let trimmed = background.trim();
+    if trimmed.starts_with('#') && (trimmed.len() == 7 || trimmed.len() == 9) {
+        return trimmed.to_string();
+    }
+
+    "#f7f1df".to_string()
 }
 
 fn request_stage_nodes(
@@ -780,6 +958,7 @@ fn request_stage_nodes(
     model: &str,
     stage: &StageSpec,
     scene: &SceneFile,
+    plan: &ScenePlan,
     repair_feedback: Option<&str>,
 ) -> Result<StageNodeResponse, AiAdapterError> {
     let endpoint = gemini_endpoint(config, model);
@@ -792,6 +971,7 @@ fn request_stage_nodes(
                 prompt,
                 stage,
                 scene,
+                plan,
                 repair_feedback,
             ))],
         }],
@@ -815,7 +995,7 @@ fn request_stage_nodes(
 }
 
 fn merge_stage_children(scene: &mut SceneFile, children: Vec<SceneNode>) {
-    scene.document.root.children.extend(children);
+    let _ = apply_stage_children_to_scene(scene, children);
 }
 
 fn validate_stage_children(
@@ -830,12 +1010,21 @@ fn validate_stage_children(
     }
 
     let mut issues = Vec::new();
+    let parent_targets = stage_parent_targets(children);
     for child in children {
-        collect_stage_node_issues(child, &format!("stage.children.{}", child.id), &mut issues);
+        collect_stage_node_issues(
+            child,
+            &format!("stage.children.{}", child.id),
+            &parent_targets,
+            &mut issues,
+        );
     }
 
     let mut candidate = scene.clone();
-    candidate.document.root.children.extend(children.to_vec());
+    issues.extend(apply_stage_children_to_scene(
+        &mut candidate,
+        children.to_vec(),
+    ));
     issues.extend(validate_scene(&candidate));
 
     if issues.is_empty() {
@@ -845,10 +1034,15 @@ fn validate_stage_children(
     }
 }
 
-fn collect_stage_node_issues(node: &SceneNode, path: &str, issues: &mut Vec<ValidationIssue>) {
+fn collect_stage_node_issues(
+    node: &SceneNode,
+    path: &str,
+    parent_targets: &std::collections::HashSet<String>,
+    issues: &mut Vec<ValidationIssue>,
+) {
     match node.node_type {
         scene_schema::NodeType::Group => {
-            if node.children.is_empty() {
+            if node.children.is_empty() && !parent_targets.contains(&node.id) {
                 issues.push(ValidationIssue {
                     path: path.to_string(),
                     message: "group nodes must contain meaningful child nodes".to_string(),
@@ -901,8 +1095,100 @@ fn collect_stage_node_issues(node: &SceneNode, path: &str, issues: &mut Vec<Vali
     }
 
     for child in &node.children {
-        collect_stage_node_issues(child, &format!("{path}.children.{}", child.id), issues);
+        collect_stage_node_issues(
+            child,
+            &format!("{path}.children.{}", child.id),
+            parent_targets,
+            issues,
+        );
     }
+}
+
+fn stage_parent_targets(children: &[SceneNode]) -> std::collections::HashSet<String> {
+    children
+        .iter()
+        .filter_map(stage_parent_id)
+        .collect::<std::collections::HashSet<_>>()
+}
+
+fn stage_parent_id(node: &SceneNode) -> Option<String> {
+    node.meta
+        .get("parent")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn clear_stage_parent_meta(node: &mut SceneNode) {
+    node.meta.remove("parent");
+}
+
+fn apply_stage_children_to_scene(
+    scene: &mut SceneFile,
+    children: Vec<SceneNode>,
+) -> Vec<ValidationIssue> {
+    let mut pending = children;
+    let mut issues = Vec::new();
+    let max_passes = pending.len().saturating_mul(2).max(1);
+
+    for _ in 0..max_passes {
+        if pending.is_empty() {
+            break;
+        }
+
+        let mut next_pending = Vec::new();
+        let mut progressed = false;
+
+        for mut node in pending {
+            let parent_id = stage_parent_id(&node);
+            if let Some(parent_id) = parent_id {
+                clear_stage_parent_meta(&mut node);
+                if insert_node_under_parent(&mut scene.document.root, &parent_id, node.clone()) {
+                    progressed = true;
+                } else {
+                    let mut unresolved = node;
+                    unresolved
+                        .meta
+                        .insert("parent".to_string(), serde_json::Value::String(parent_id));
+                    next_pending.push(unresolved);
+                }
+            } else {
+                scene.document.root.children.push(node);
+                progressed = true;
+            }
+        }
+
+        pending = next_pending;
+        if !progressed {
+            break;
+        }
+    }
+
+    for node in pending {
+        issues.push(ValidationIssue {
+            path: format!("stage.children.{}.meta.parent", node.id),
+            message: format!(
+                "could not resolve parent reference {:?} while stitching stage output",
+                stage_parent_id(&node)
+            ),
+        });
+    }
+
+    issues
+}
+
+fn insert_node_under_parent(current: &mut SceneNode, parent_id: &str, node: SceneNode) -> bool {
+    if current.id == parent_id {
+        current.children.push(node);
+        return true;
+    }
+
+    for child in &mut current.children {
+        if insert_node_under_parent(child, parent_id, node.clone()) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn critique_and_maybe_revise_scene(
@@ -1123,6 +1409,8 @@ fn send_gemini_request(
     endpoint: String,
     request: &GeminiGenerateContentRequest,
 ) -> Result<String, AiAdapterError> {
+    respect_gemini_rate_limit(model);
+
     let request_trace =
         sanitize_trace_value(serde_json::to_value(request).unwrap_or_else(
             |_| serde_json::json!({ "trace_error": "failed to serialize request" }),
@@ -1268,6 +1556,42 @@ fn send_gemini_request(
         None,
     );
     Ok(json_text)
+}
+
+fn respect_gemini_rate_limit(model: &str) {
+    let Some(min_spacing) = gemini_min_spacing_for_model(model) else {
+        return;
+    };
+
+    let limiter = GEMINI_RATE_LIMITER.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut state = match limiter.lock() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
+
+    let now = Instant::now();
+    if let Some(last_request_at) = state.get(model).copied() {
+        let elapsed = now.saturating_duration_since(last_request_at);
+        if elapsed < min_spacing {
+            std::thread::sleep(min_spacing - elapsed);
+        }
+    }
+
+    state.insert(model.to_string(), Instant::now());
+}
+
+fn gemini_min_spacing_for_model(model: &str) -> Option<Duration> {
+    let normalized = model.trim().to_lowercase();
+
+    if normalized.contains("2.5-flash-lite") {
+        return Some(Duration::from_millis(4_200));
+    }
+
+    if normalized.contains("2.5-flash") {
+        return Some(Duration::from_millis(6_200));
+    }
+
+    None
 }
 
 fn write_trace_bundle(
@@ -1472,6 +1796,7 @@ fn gemini_stage_user_prompt(
     prompt: &str,
     stage: &StageSpec,
     scene: &SceneFile,
+    plan: &ScenePlan,
     repair_feedback: Option<&str>,
 ) -> String {
     let repair_block = repair_feedback
@@ -1491,8 +1816,11 @@ fn gemini_stage_user_prompt(
         concat!(
             "User request:\n{}\n\n",
             "Current working scene JSON:\n{}\n\n",
+            "Overall plan summary: {}\n\n",
             "Current stage id: {}\n",
             "Stage purpose: {}\n\n",
+            "Target node ids for this stage: {}\n",
+            "Relevant composition hints:\n{}\n\n",
             "Instructions:\n",
             "- return only the new child nodes needed for this stage\n",
             "- assume these nodes will be appended under the root group\n",
@@ -1504,15 +1832,18 @@ fn gemini_stage_user_prompt(
             "- Path params use points: [{{\"x\":..,\"y\":..}}] and optional closed, not SVG path data\n",
             "- Text params use text, fontSize, optional fontFamily, and optional lineHeight\n",
             "- Rectangle params use width, height, optional cornerRadius\n",
-            "- Group nodes must include non-empty children\n",
-            "- Keep bicycle nodes in the bicycle stage and pelican nodes in the pelican stage\n\n",
+            "- Group nodes must include non-empty children, or sibling nodes must set meta.parent to that group's id so they can be stitched under it\n",
+            "- Keep the output focused on this stage's target node ids and avoid duplicating nodes from other stages\n\n",
             "Quick param guide:\n{}\n",
             "{}"
         ),
         prompt,
         serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string()),
+        plan.summary,
         stage.id,
         stage.purpose,
+        stage.target_node_ids.join(", "),
+        stage.composition_hints.join("\n"),
         stage_param_guide(),
         repair_block
     )
