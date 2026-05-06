@@ -2000,7 +2000,7 @@ fn send_gemini_request_once(
 }
 
 fn gemini_request_max_attempts(model: &str) -> usize {
-    if model.contains("gemma-4") { 4 } else { 3 }
+    if model.contains("gemma-4") { 4 } else { 1 }
 }
 
 fn gemini_retry_backoff(attempt: usize) -> Duration {
