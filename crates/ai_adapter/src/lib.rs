@@ -905,6 +905,7 @@ enum StageKind {
     Support,
     Subject,
     Text,
+    Assembly,
 }
 
 #[derive(Debug, Clone)]
@@ -915,6 +916,7 @@ struct StageSpec {
     purpose: String,
     target_node_ids: Vec<String>,
     composition_hints: Vec<String>,
+    focus_group_id: Option<String>,
 }
 
 fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
@@ -933,21 +935,22 @@ fn derive_stages_from_plan(plan: &ScenePlan) -> Vec<StageSpec> {
     );
 
     if stages.is_empty() {
-        stages.push(StageSpec {
-            kind: StageKind::Subject,
-            id: "primary_subject".to_string(),
-            slot_id: "root".to_string(),
-            purpose: format!(
+            stages.push(StageSpec {
+                kind: StageKind::Subject,
+                id: "primary_subject".to_string(),
+                slot_id: "root".to_string(),
+                purpose: format!(
                 "Add the main editable subject nodes needed to realize this planned scene: {}",
                 plan.summary
             ),
-            target_node_ids: plan
-                .major_nodes
-                .iter()
-                .map(|node| node.id.clone())
-                .collect(),
-            composition_hints: plan.composition_notes.iter().take(3).cloned().collect(),
-        });
+                target_node_ids: plan
+                    .major_nodes
+                    .iter()
+                    .map(|node| node.id.clone())
+                    .collect(),
+                composition_hints: plan.composition_notes.iter().take(3).cloned().collect(),
+                focus_group_id: None,
+            });
     }
 
     stages
@@ -992,7 +995,7 @@ fn normalized_plan_hierarchy(plan: &ScenePlan) -> ScenePlanHierarchyNode {
         };
         match kind {
             StageKind::Support => support.children.push(slot),
-            StageKind::Subject => subject.children.push(slot),
+            StageKind::Subject | StageKind::Assembly => subject.children.push(slot),
             StageKind::Text => text.children.push(slot),
         }
     }
@@ -1040,12 +1043,17 @@ fn collect_stages_from_hierarchy(
             purpose: format!("Fill the planned slot '{}'. {}", node.id, purpose),
             target_node_ids,
             composition_hints: composition_notes.iter().take(3).cloned().collect(),
+            focus_group_id: None,
         });
         return;
     }
 
     for child in &node.children {
         collect_stages_from_hierarchy(child, major_nodes, composition_notes, stages);
+    }
+
+    if let Some(stage) = group_assembly_stage(node, composition_notes) {
+        stages.push(stage);
     }
 }
 
@@ -1086,6 +1094,63 @@ fn classify_stage_kind(
         StageKind::Support
     } else {
         StageKind::Subject
+    }
+}
+
+fn group_assembly_stage(
+    node: &ScenePlanHierarchyNode,
+    composition_notes: &[String],
+) -> Option<StageSpec> {
+    if node.id == "root" || !node.role.eq_ignore_ascii_case("group") {
+        return None;
+    }
+
+    let descendant_slot_ids = collect_descendant_slot_ids(node);
+    if descendant_slot_ids.len() < 2 {
+        return None;
+    }
+
+    let descriptors = [node.label.clone().unwrap_or_default()];
+    let kind = classify_stage_kind(
+        &node.id,
+        "Group",
+        node.purpose.as_deref().unwrap_or(""),
+        &descriptors,
+    );
+
+    if matches!(kind, StageKind::Support) {
+        return None;
+    }
+
+    let label = node.label.clone().unwrap_or_else(|| node.id.clone());
+    Some(StageSpec {
+        kind: StageKind::Assembly,
+        id: format!("{}_assembly", slugify(&node.id)),
+        slot_id: node.id.clone(),
+        purpose: format!(
+            "Assemble and refine the grouped subject '{}'. Keep the existing child parts, add only the connective or clarifying nodes needed to make the group read as one coherent editable subject.",
+            label
+        ),
+        target_node_ids: descendant_slot_ids,
+        composition_hints: composition_notes.iter().take(4).cloned().collect(),
+        focus_group_id: Some(node.id.clone()),
+    })
+}
+
+fn collect_descendant_slot_ids(node: &ScenePlanHierarchyNode) -> Vec<String> {
+    let mut ids = Vec::new();
+    collect_descendant_slot_ids_into(node, &mut ids);
+    ids
+}
+
+fn collect_descendant_slot_ids_into(node: &ScenePlanHierarchyNode, ids: &mut Vec<String>) {
+    if node.role.eq_ignore_ascii_case("slot") {
+        ids.push(node.id.clone());
+        return;
+    }
+
+    for child in &node.children {
+        collect_descendant_slot_ids_into(child, ids);
     }
 }
 
@@ -1426,18 +1491,25 @@ fn should_visually_critique_stage(stage: &StageSpec) -> bool {
 }
 
 fn build_stage_critique_feedback(stage: &StageSpec, critique: &SceneCritique) -> String {
+    let focus_group = stage
+        .focus_group_id
+        .as_ref()
+        .map(|group_id| format!(" Focus on the assembled group '{}'.", group_id))
+        .unwrap_or_default();
+
     format!(
         concat!(
             "The rendered image shows problems with stage '{}'. ",
             "Stage summary: {} ",
             "Issues: {} ",
             "Revision goals: {} ",
-            "Regenerate only this stage's nodes and keep the rest of the scene intact."
+            "Regenerate only this stage's nodes and keep the rest of the scene intact.{}"
         ),
         stage.id,
         critique.summary,
         critique.issues.join(" | "),
-        critique.revision_goals.join(" | ")
+        critique.revision_goals.join(" | "),
+        focus_group,
     )
 }
 
@@ -1935,6 +2007,8 @@ fn gemini_plan_user_prompt(
             "- list the major editable nodes needed to draw the scene\n",
             "- provide a hierarchy tree rooted at id 'root' with role 'group'\n",
             "- use role 'group' for container layers and role 'slot' for leaf insertion targets\n",
+            "- when a subject is naturally composed of parts, introduce an intermediate named group for that subject and place part slots beneath it\n",
+            "- when two subjects should later be treated as one composition, introduce a higher-level group that contains them\n",
             "- make each major editable object correspond to a leaf slot id in the hierarchy\n",
             "- make the scene funny and compositionally clear\n",
             "- prefer native structured nodes over raster fallback when possible\n"
@@ -1973,6 +2047,7 @@ fn gemini_stage_user_prompt(
             "Current stage id: {}\n",
             "Target slot id: {}\n",
             "Stage purpose: {}\n\n",
+            "Focus group id: {}\n",
             "Target node ids for this stage: {}\n",
             "Relevant composition hints:\n{}\n\n",
             "Instructions:\n",
@@ -1982,6 +2057,7 @@ fn gemini_stage_user_prompt(
             "- make the result editable and structurally clear\n",
             "- use multiple nodes when that helps readability\n",
             "- do not return an empty children array\n",
+            "- if this is an assembly/refinement stage, preserve the existing part nodes already in the target group and add only the connective, clarifying, or compositional nodes needed to make the group read correctly as a whole\n",
             "- Ellipse params use radiusX and radiusY, not width/height\n",
             "- Path params use points: [{{\"x\":..,\"y\":..}}] and optional closed, not SVG path data\n",
             "- Text params use text, fontSize, optional fontFamily, and optional lineHeight\n",
@@ -1997,6 +2073,7 @@ fn gemini_stage_user_prompt(
         stage.id,
         stage.slot_id,
         stage.purpose,
+        stage.focus_group_id.as_deref().unwrap_or("-"),
         stage.target_node_ids.join(", "),
         stage.composition_hints.join("\n"),
         stage_param_guide(),
@@ -2029,11 +2106,13 @@ fn gemini_stage_critique_user_prompt(
             "Current stage id: {}\n",
             "Target slot id: {}\n",
             "Stage purpose: {}\n",
+            "Focus group id: {}\n",
             "Target node ids: {}\n",
             "Relevant composition hints:\n{}\n\n",
             "Current scene JSON:\n{}\n\n",
             "Look at the rendered image and judge whether this stage's contribution is visually successful.\n",
             "Focus on the newest stage output, but consider how it fits into the whole scene.\n",
+            "If a focus group id is present, evaluate whether that assembled group reads clearly as one coherent subject or composition.\n",
             "If this stage is acceptable, mark satisfactory true.\n",
             "If not, give concise issues and revision goals for regenerating only this stage."
         ),
@@ -2042,6 +2121,7 @@ fn gemini_stage_critique_user_prompt(
         stage.id,
         stage.slot_id,
         stage.purpose,
+        stage.focus_group_id.as_deref().unwrap_or("-"),
         stage.target_node_ids.join(", "),
         stage.composition_hints.join("\n"),
         serde_json::to_string_pretty(scene).unwrap_or_else(|_| "{}".to_string())
@@ -2525,6 +2605,7 @@ mod tests {
             purpose: "support".to_string(),
             target_node_ids: vec!["ground".to_string()],
             composition_hints: vec![],
+            focus_group_id: None,
         }];
         assert!(!can_finalize_staged_scene(&support_only));
 
@@ -2537,9 +2618,132 @@ mod tests {
                 purpose: "subject".to_string(),
                 target_node_ids: vec!["pelican".to_string()],
                 composition_hints: vec![],
+                focus_group_id: None,
             },
         ];
         assert!(can_finalize_staged_scene(&with_subject));
+    }
+
+    #[test]
+    fn derive_stages_adds_subject_group_assembly_stage() {
+        let plan = ScenePlan {
+            summary: "Pelican on a bicycle".to_string(),
+            canvas: ScenePlanCanvas {
+                width: 1200.0,
+                height: 900.0,
+                background: "#f7f1df".to_string(),
+            },
+            style_keywords: vec!["playful".to_string()],
+            major_nodes: vec![
+                ScenePlanNode {
+                    id: "pelican_body".to_string(),
+                    node_type: "Ellipse".to_string(),
+                    purpose: "Pelican body".to_string(),
+                },
+                ScenePlanNode {
+                    id: "pelican_beak".to_string(),
+                    node_type: "Path".to_string(),
+                    purpose: "Pelican beak".to_string(),
+                },
+            ],
+            composition_notes: vec!["Keep the pelican centered.".to_string()],
+            hierarchy: ScenePlanHierarchyNode {
+                id: "root".to_string(),
+                role: "group".to_string(),
+                label: Some("Root".to_string()),
+                purpose: Some("Scene root".to_string()),
+                children: vec![ScenePlanHierarchyNode {
+                    id: "pelican_group".to_string(),
+                    role: "group".to_string(),
+                    label: Some("Pelican Group".to_string()),
+                    purpose: Some("Grouped pelican subject".to_string()),
+                    children: vec![
+                        ScenePlanHierarchyNode {
+                            id: "pelican_body".to_string(),
+                            role: "slot".to_string(),
+                            label: Some("Body".to_string()),
+                            purpose: Some("Pelican body".to_string()),
+                            children: vec![],
+                        },
+                        ScenePlanHierarchyNode {
+                            id: "pelican_beak".to_string(),
+                            role: "slot".to_string(),
+                            label: Some("Beak".to_string()),
+                            purpose: Some("Pelican beak".to_string()),
+                            children: vec![],
+                        },
+                    ],
+                }],
+            },
+        };
+
+        let stages = super::derive_stages_from_plan(&plan);
+        assert_eq!(stages.len(), 3);
+        assert!(stages.iter().any(|stage| {
+            matches!(stage.kind, StageKind::Assembly)
+                && stage.slot_id == "pelican_group"
+                && stage.focus_group_id.as_deref() == Some("pelican_group")
+        }));
+    }
+
+    #[test]
+    fn derive_stages_does_not_add_support_group_assembly_stage() {
+        let plan = ScenePlan {
+            summary: "Poster".to_string(),
+            canvas: ScenePlanCanvas {
+                width: 1200.0,
+                height: 900.0,
+                background: "#f7f1df".to_string(),
+            },
+            style_keywords: vec!["poster".to_string()],
+            major_nodes: vec![
+                ScenePlanNode {
+                    id: "sky_slot".to_string(),
+                    node_type: "Rectangle".to_string(),
+                    purpose: "Background sky".to_string(),
+                },
+                ScenePlanNode {
+                    id: "ground_slot".to_string(),
+                    node_type: "Rectangle".to_string(),
+                    purpose: "Ground plane".to_string(),
+                },
+            ],
+            composition_notes: vec![],
+            hierarchy: ScenePlanHierarchyNode {
+                id: "root".to_string(),
+                role: "group".to_string(),
+                label: Some("Root".to_string()),
+                purpose: Some("Scene root".to_string()),
+                children: vec![ScenePlanHierarchyNode {
+                    id: "background_group".to_string(),
+                    role: "group".to_string(),
+                    label: Some("Background Group".to_string()),
+                    purpose: Some("Background support".to_string()),
+                    children: vec![
+                        ScenePlanHierarchyNode {
+                            id: "sky_slot".to_string(),
+                            role: "slot".to_string(),
+                            label: Some("Sky".to_string()),
+                            purpose: Some("Background sky".to_string()),
+                            children: vec![],
+                        },
+                        ScenePlanHierarchyNode {
+                            id: "ground_slot".to_string(),
+                            role: "slot".to_string(),
+                            label: Some("Ground".to_string()),
+                            purpose: Some("Ground plane".to_string()),
+                            children: vec![],
+                        },
+                    ],
+                }],
+            },
+        };
+
+        let stages = super::derive_stages_from_plan(&plan);
+        assert_eq!(stages.len(), 2);
+        assert!(!stages
+            .iter()
+            .any(|stage| matches!(stage.kind, StageKind::Assembly)));
     }
 
     #[test]
